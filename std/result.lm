@@ -1,0 +1,88 @@
+## std/result.lm — helpers sobre o `Result` do prelude.
+##
+## Uso:
+##   import "std/result"
+##
+##   fn main() -> int:
+##       let r = divide(10, 2)
+##       if is_ok(r):
+##           print(unwrap(r))
+##       return 0
+##
+## `Result` está definido em `std/prelude.lm` (auto-importado):
+##   enum Result: Ok(int); Err(int)
+##
+## Todos os helpers são `int`-only por enquanto (o prelude não é genérico).
+
+## Retorna o payload se `Ok`; 0 se `Err`.
+fn unwrap(r: Result) -> int:
+    match r:
+        case Ok(v):
+            return v
+        case Err(e):
+            return 0
+    return 0
+
+## Retorna o payload se `Ok`; `default` se `Err`.
+fn unwrap_or(r: Result, fallback: int) -> int:
+    match r:
+        case Ok(v):
+            return v
+        case Err(e):
+            return fallback
+    return fallback
+
+## Retorna 1 se `Ok`, 0 se `Err`.
+fn is_ok(r: Result) -> int:
+    match r:
+        case Ok(v):
+            return 1
+        case Err(e):
+            return 0
+    return 0
+
+## Retorna 1 se `Err`, 0 se `Ok`.
+fn is_err(r: Result) -> int:
+    match r:
+        case Ok(v):
+            return 0
+        case Err(e):
+            return 1
+    return 0
+
+## Retorna 1 se `Ok` e o payload satisfaz `pred`; 0 caso contrário.
+fn is_ok_and(r: Result, pred: fn) -> int:
+    match r:
+        case Ok(v):
+            return pred(v)
+        case Err(e):
+            return 0
+    return 0
+
+## Retorna o payload se `Ok`; imprime `msg` e retorna 0 se `Err`.
+fn expect(r: Result, msg: str) -> int:
+    match r:
+        case Ok(v):
+            return v
+        case Err(e):
+            print("expect failed:", msg)
+            return 0
+    return 0
+
+## Aplica `f` ao payload se `Ok`; passa `Err` adiante.
+fn map(r: Result, f: fn) -> Result:
+    match r:
+        case Ok(v):
+            return Ok(f(v))
+        case Err(e):
+            return Err(e)
+    return Err(0)
+
+## Aplica `f` ao payload se `Ok` e desembrulha o Result resultante.
+fn and_then(r: Result, f: fn) -> Result:
+    match r:
+        case Ok(v):
+            return f(v)
+        case Err(e):
+            return Err(e)
+    return Err(0)

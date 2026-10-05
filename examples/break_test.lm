@@ -1,0 +1,22 @@
+fn main() -> int:
+    mut arr = alloc(10)
+    
+    # Preenche o array
+    for i in 0..10:
+        arr[i] = i * 5
+        
+    let alvo = 25
+    mut indice_encontrado = -1
+    
+    # Procura o número 25 no array
+    for i in 0..10:
+        if arr[i] == alvo:
+            indice_encontrado = i
+            break # NOVO: Encontrou! Pára de procurar imediatamente.
+            
+    if indice_encontrado != -1:
+        print("Numero", alvo, "encontrado no indice:", indice_encontrado)
+    else:
+        print("Numero nao encontrado.")
+        
+    return 0

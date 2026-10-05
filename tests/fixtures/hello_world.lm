@@ -1,0 +1,5 @@
+fn main() -> int:
+    let nome = "Mundo"
+    let msg = "Olá, " + nome + "!"
+    print(msg)
+    return 0

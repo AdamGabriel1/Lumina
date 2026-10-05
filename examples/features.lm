@@ -1,0 +1,19 @@
+fn processar_dados(id: int):
+    defer print("Liberando recursos do ID:", id)
+    
+    # MUDANÇA AQUI: Usando vírgulas no print (100% seguro, sem sprintf)
+    print("Processando dados para o usuario", id, "...")
+    
+    if id == 2:
+        print("Erro encontrado, retornando cedo!")
+        return
+        
+    print("Processo concluído com sucesso.")
+
+fn main() -> int:
+    processar_dados(1)
+    processar_dados(2)
+    
+    let porta = 8080
+    print("Servidor rodando na porta", porta, "...")
+    return 0

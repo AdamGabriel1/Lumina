@@ -1,0 +1,16 @@
+fn somar(n: int) -> int:
+    mut total = 0
+    mut i = 0
+    while i < n:
+        total += i
+        i += 1
+    return total
+
+fn main() -> int:
+    print("Iniciando testes de performance...")
+    
+    bench "somar 1 milhao":
+        let res = somar(1000000)
+        print("Resultado:", res)
+        
+    return 0

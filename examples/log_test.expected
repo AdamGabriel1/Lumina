@@ -1,0 +1,16 @@
+=== nível INFO (padrão) ===
+[INFO]  info aparece
+[WARN]  warn aparece
+[ERROR] error aparece
+
+=== nível DEBUG ===
+[DEBUG] agora debug aparece
+[INFO]  info continua aparecendo
+[WARN]  warn idem
+[ERROR] error idem
+
+=== nível ERROR ===
+[ERROR] só error aparece
+
+=== get_level() ===
+nível atual: 3

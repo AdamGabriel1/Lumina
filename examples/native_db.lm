@@ -1,0 +1,67 @@
+import "std/fs"
+
+# Em memória, guardamos como "chave=valor\n"
+mut db_mem = ""
+
+fn db_load():
+    db_mem = read_file("lumina_db.txt")
+
+fn db_save():
+    write_file("lumina_db.txt", db_mem)
+
+fn db_set(key: str, val: str):
+    db_mem = db_mem + key + "=" + val + "\n"
+    db_save()
+    print("✅ Inserido:", key, "->", val)
+
+fn db_get(key: str) -> str:
+    let mem_len = len(db_mem)
+    let key_len = len(key)
+    mut i = 0
+    
+    while i < mem_len:
+        # Tenta casar a chave na posição i (renomeado para is_match)
+        mut is_match = 1
+        mut j = 0
+        while j < key_len:
+            if db_mem[i+j] != key[j]:
+                is_match = 0
+                break
+            j += 1
+            
+        # Se casou e o próximo char é '=' (ASCII 61)
+        if is_match == 1 and db_mem[i+key_len] == 61:
+            mut val = ""
+            mut k = i + key_len + 1
+            # Lê até o \n (ASCII 10) ou fim da string
+            while k < mem_len and db_mem[k] != 10:
+                val = val + chr(db_mem[k])
+                k += 1
+            return val
+            
+        # Pula para a próxima linha
+        while i < mem_len and db_mem[i] != 10:
+            i += 1
+        i += 1
+        
+    return "NOT_FOUND"
+
+fn main() -> int:
+    print("🚀 LuminaDB iniciando...")
+    db_load()
+    
+    # Inserir dados
+    db_set("user", "admin")
+    db_set("pass", "1234")
+    db_set("lang", "Lumina")
+    
+    # Buscar dados
+    let u = db_get("user")
+    let p = db_get("pass")
+    let l = db_get("lang")
+    
+    print("User:", u)
+    print("Pass:", p)
+    print("Lang:", l)
+    
+    return 0

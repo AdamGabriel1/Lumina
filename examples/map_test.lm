@@ -1,0 +1,17 @@
+import "std/map"
+
+fn main() -> int:
+    print("🚀 Testando Hash Map...")
+
+    mut m = new_map()
+
+    m.insert(10, 100)
+    m.insert(26, 200)
+    m.insert(42, 999)
+
+    print("Valor 10:", m.get(10))
+    print("Valor 26:", m.get(26))
+    print("Valor 42:", m.get(42))
+    print("Valor 99:", m.get(99))
+
+    return 0

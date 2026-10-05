@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Lumina Playground</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #1e1e1e; color: #d4d4d4; margin: 0; padding: 20px; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
+        h1 { color: #6A0DAD; text-align: center; margin-bottom: 20px; }
+        .container { display: flex; flex: 1; gap: 20px; }
+        .editor-pane { flex: 1; display: flex; flex-direction: column; }
+        .output-pane { flex: 1; display: flex; flex-direction: column; }
+        textarea { width: 100%; flex: 1; background-color: #252526; color: #d4d4d4; border: 1px solid #333; border-radius: 8px; padding: 15px; font-family: "Fira Code", "Courier New", monospace; font-size: 14px; resize: none; box-sizing: border-box; }
+        button { background-color: #6A0DAD; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 16px; margin-top: 10px; align-self: flex-start; }
+        button:hover { background-color: #5a0d9d; }
+        pre { background-color: #252526; border: 1px solid #333; border-radius: 8px; padding: 15px; flex: 1; overflow: auto; white-space: pre-wrap; word-wrap: break-word; }
+        .error { color: #f48771; }
+        .success { color: #89d185; }
+    </style>
+</head>
+<body>
+    <h1>🌟 Lumina Playground (JIT)</h1>
+    <div class="container">
+        <div class="editor-pane">
+            <h3>Código Lumina:</h3>
+            <textarea id="code" spellcheck="false">print("Olá do Navegador!")
+let x = 10
+let y = 20
+print("Soma:", x + y)</textarea>
+            <button onclick="runCode()">▶ Executar</button>
+        </div>
+        <div class="output-pane">
+            <h3>Output:</h3>
+            <pre id="output">Aguardando execução...</pre>
+        </div>
+    </div>
+
+    <script>
+        async function runCode() {
+            const code = document.getElementById('code').value;
+            const outputEl = document.getElementById('output');
+            outputEl.textContent = "Compilando e executando...";
+            outputEl.className = '';
+
+            try {
+                const response = await fetch('/api/compile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code })
+                });
+                const data = await response.json();
+                
+                outputEl.textContent = data.output;
+                outputEl.className = data.success ? 'success' : 'error';
+            } catch (err) {
+                outputEl.textContent = "Erro de conexão com o servidor: " + err.message;
+                outputEl.className = 'error';
+            }
+        }
+    </script>
+</body>
+</html>

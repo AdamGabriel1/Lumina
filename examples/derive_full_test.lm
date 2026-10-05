@@ -1,0 +1,46 @@
+@derive(Eq, Debug, Default, Clone)
+struct Ponto:
+    x: int
+    y: int
+
+@derive(Default)
+struct Pessoa:
+    idade: int
+    altura: float
+    ativo: bool
+
+fn main() -> int:
+    print("=== Default ===")
+    let p1 = new_Ponto()
+    print("p1.x =", p1.x)
+    print("p1.y =", p1.y)
+
+    let pessoa = new_Pessoa()
+    print("pessoa.idade =", pessoa.idade)
+    print("pessoa.ativo =", pessoa.ativo)
+
+    print("=== Clone ===")
+    mut original: Ponto
+    original.x = 10
+    original.y = 20
+    let copia = original.clone()
+    print("copia.x =", copia.x)
+    print("copia.y =", copia.y)
+
+    print("=== Eq ===")
+    let a = new_Ponto()
+    let b = new_Ponto()
+    print("a == b?", a == b)
+
+    mut c: Ponto
+    c.x = 5
+    c.y = 5
+    print("a == c?", a == c)
+
+    print("=== Debug ===")
+    mut d: Ponto
+    d.x = 1
+    d.y = 2
+    print(d.__debug__())
+
+    return 0

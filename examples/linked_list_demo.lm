@@ -1,0 +1,15 @@
+import "std/list"
+
+fn main() -> int:
+    print("🚀 Testando Linked List Nativa...")
+    mut l = new()
+    
+    push(l, 10)
+    push(l, 20)
+    push(l, 30)
+    
+    print("Tamanho da lista:", l.size)
+    print("Elemento 0:", get(l, 0))
+    print("Elemento 1:", get(l, 1))
+    print("Elemento 2:", get(l, 2))
+    return 0

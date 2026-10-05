@@ -1,0 +1,34 @@
+import "std/async"
+
+# Buffers de contexto (ucontext_t tem ~1KB em x86_64 Linux).
+# Não vivem na stack porque swapcontext pode retornar aqui a qualquer momento.
+let CTX_SIZE = 1024
+
+mut main_ctx      = alloc_bytes(CTX_SIZE)
+mut scheduler_ctx = alloc_bytes(CTX_SIZE)
+
+# Flag global: swapcontext salva o estado, então variáveis locais
+# podem ser restauradas a qualquer valor. Globais são confiáveis.
+mut resumed = 0
+
+fn task_a():
+    mut i = 0
+    while i < 3:
+        print("Task A:", i)
+        i += 1
+        swapcontext(scheduler_ctx, main_ctx)
+
+fn main() -> int:
+    print("Iniciando Green Threads...")
+
+    # Salva o contexto atual em main_ctx
+    getcontext(main_ctx)
+
+    if resumed == 0:
+        resumed = 1
+        print("Iniciando Task A...")
+        task_a()
+
+    print("Task A concluída ou cedeu CPU. Continuando na main...")
+    print("Fim do escalonador.")
+    return 0

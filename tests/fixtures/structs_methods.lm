@@ -1,0 +1,23 @@
+# Teste de Structs, Impl e Encadeamento
+struct Caixa:
+    valor: int
+    proximo: Caixa
+
+impl Caixa:
+    fn dobrar(self: Caixa) -> int:
+        return self.valor * 2
+
+fn main() -> int:
+    mut c1: Caixa
+    c1.valor = 10
+    
+    mut c2: Caixa
+    c2.valor = 20
+    
+    c1.proximo = c2
+    
+    print("Valor C1:", c1.valor)
+    print("Dobro C1:", c1.dobrar())
+    print("Valor C2 via C1:", c1.proximo.valor)
+    
+    return 0

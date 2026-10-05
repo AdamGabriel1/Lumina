@@ -1,0 +1,243 @@
+# lumina/codegen.lm
+import "lumina_core/parser"
+import "lumina/semantic"
+
+fn int_to_str(n: int) -> str:
+    if n == 0: return "0"
+    mut buf = alloc(32)
+    mut i = 0
+    mut is_neg = 0
+    if n < 0:
+        is_neg = 1
+        n = -n
+    while n > 0:
+        buf[i] = chr(48 + n % 10)
+        i = i + 1
+        n = n / 10
+    if is_neg == 1:
+        buf[i] = '-'
+        i = i + 1
+    buf[i] = chr(0)
+    mut start = 0
+    mut end = i - 1
+    while start < end:
+        let temp = buf[start]
+        buf[start] = buf[end]
+        buf[end] = temp
+        start = start + 1
+        end = end - 1
+    return buf
+
+struct LLVMCodegen:
+    module_ir: str
+    string_counter: int
+    temp_counter: int
+    symbol_table: ptr
+    symbol_ptrs: ptr
+    symbol_count: int
+
+impl LLVMCodegen:
+    fn init():
+        self.module_ir = ""
+        self.string_counter = 0
+        self.temp_counter = 0
+        self.symbol_table = alloc(1024)
+        self.symbol_ptrs = alloc(1024)
+        self.symbol_count = 0
+        self.module_ir = self.module_ir + "target triple = \"x86_64-pc-linux-gnu\"\n"
+        self.module_ir = self.module_ir + "declare i32 @printf(i8*, ...)\n"
+        self.module_ir = self.module_ir + "declare i8* @malloc(i64)\n"
+        self.module_ir = self.module_ir + "declare i64 @strlen(i8*)\n"
+
+    fn add_global_string(text: str) -> str:
+        let name = ".str_" + int_to_str(self.string_counter)
+        self.string_counter = self.string_counter + 1
+        self.module_ir = self.module_ir + "@" + name + " = private constant [" + int_to_str(len(text) + 1) + " x i8] c\"" + text + "\\00\"\n"
+        return name
+
+    fn add_local_var(name: str, ptr: str):
+        self.symbol_table[self.symbol_count] = name as int
+        self.symbol_ptrs[self.symbol_count] = ptr as int
+        self.symbol_count = self.symbol_count + 1
+
+    fn get_local_var(name: str) -> str:
+        mut i = 0
+        while i < self.symbol_count:
+            if self.symbol_table[i] as str == name:
+                return self.symbol_ptrs[i] as str
+            i = i + 1
+        return ""
+
+    fn new_temp() -> str:
+        let t = "%t" + int_to_str(self.temp_counter)
+        self.temp_counter = self.temp_counter + 1
+        return t
+
+    fn gen_program(root: int) -> str:
+        let decl = node_nexts[root]
+        mut cur = decl
+        while cur >= 0:
+            self.gen_function(cur)
+            cur = node_nexts[cur]
+        return self.module_ir
+
+    fn gen_function(idx: int):
+        let name = _str_get(idx)
+        self.module_ir = self.module_ir + "define i64 @" + name + "() {\n"
+        self.module_ir = self.module_ir + "entry:\n"
+        let body = node_bodys[idx]
+        mut cur = body
+        while cur >= 0:
+            self.gen_stmt(cur)
+            cur = node_nexts[cur]
+        self.module_ir = self.module_ir + "  ret i64 0\n"
+        self.module_ir = self.module_ir + "}\n"
+
+    fn gen_stmt(idx: int):
+        let kind = node_kinds[idx]
+        if kind == NK_VAR_DECL: self.gen_var_decl(idx)
+        elif kind == NK_RETURN: self.gen_return(idx)
+        elif kind == NK_IF: self.gen_if(idx)
+        elif kind == NK_WHILE: self.gen_while(idx)
+        elif kind == NK_ASSIGN: self.gen_assign(idx)
+        else: self.gen_expr(idx)
+
+    fn gen_var_decl(idx: int):
+        let name = _str_get(idx)
+        let ptr = "%" + name
+        self.module_ir = self.module_ir + "  " + ptr + " = alloca i64\n"
+        self.add_local_var(name, ptr)
+        if node_lefts[idx] >= 0:
+            let val = self.gen_expr(node_lefts[idx])
+            self.module_ir = self.module_ir + "  store i64 " + val + ", i64* " + ptr + "\n"
+
+    fn gen_return(idx: int):
+        if node_lefts[idx] >= 0:
+            let val = self.gen_expr(node_lefts[idx])
+            self.module_ir = self.module_ir + "  ret i64 " + val + "\n"
+        else:
+            self.module_ir = self.module_ir + "  ret i64 0\n"
+
+    fn gen_if(idx: int):
+        let cond = self.gen_expr(node_lefts[idx])
+        let lbl_true = self.new_temp()
+        let lbl_false = self.new_temp()
+        let lbl_end = self.new_temp()
+        self.module_ir = self.module_ir + "  br i1 icmp ne (i64 " + cond + ", i64 0), label %" + lbl_true + ", label %" + lbl_false + "\n"
+        self.module_ir = self.module_ir + lbl_true + ":\n"
+        let body = node_bodys[idx]
+        mut cur = body
+        while cur >= 0:
+            self.gen_stmt(cur)
+            cur = node_nexts[cur]
+        self.module_ir = self.module_ir + "  br label %" + lbl_end + "\n"
+        self.module_ir = self.module_ir + lbl_false + ":\n"
+        let else_body = node_rights[idx]
+        if else_body >= 0:
+            cur = else_body
+            while cur >= 0:
+                self.gen_stmt(cur)
+                cur = node_nexts[cur]
+        self.module_ir = self.module_ir + "  br label %" + lbl_end + "\n"
+        self.module_ir = self.module_ir + lbl_end + ":\n"
+
+    fn gen_while(idx: int):
+        let lbl_cond = self.new_temp()
+        let lbl_body = self.new_temp()
+        let lbl_end = self.new_temp()
+        self.module_ir = self.module_ir + "  br label %" + lbl_cond + "\n"
+        self.module_ir = self.module_ir + lbl_cond + ":\n"
+        let cond = self.gen_expr(node_lefts[idx])
+        self.module_ir = self.module_ir + "  br i1 icmp ne (i64 " + cond + ", i64 0), label %" + lbl_body + ", label %" + lbl_end + "\n"
+        self.module_ir = self.module_ir + lbl_body + ":\n"
+        let body = node_bodys[idx]
+        mut cur = body
+        while cur >= 0:
+            self.gen_stmt(cur)
+            cur = node_nexts[cur]
+        self.module_ir = self.module_ir + "  br label %" + lbl_cond + "\n"
+        self.module_ir = self.module_ir + lbl_end + ":\n"
+
+    fn gen_assign(idx: int):
+        let val = self.gen_expr(node_rights[idx])
+        let left = node_lefts[idx]
+        if node_kinds[left] == NK_VARIABLE:
+            let name = _str_get(left)
+            let ptr = self.get_local_var(name)
+            if len(ptr) > 0:
+                self.module_ir = self.module_ir + "  store i64 " + val + ", i64* " + ptr + "\n"
+
+    fn gen_expr(idx: int) -> str:
+        let kind = node_kinds[idx]
+        if kind == NK_NUMBER: return _str_get(idx)
+        elif kind == NK_BOOL:
+            if _str_get(idx) == "true": return "1"
+            return "0"
+        elif kind == NK_STRING:
+            let s = _str_get(idx)
+            let gstr = self.add_global_string(s)
+            return "getelementptr inbounds ([" + int_to_str(len(s)+1) + " x i8], [" + int_to_str(len(s)+1) + " x i8]* @" + gstr + ", i32 0, i32 0)"
+        elif kind == NK_VARIABLE:
+            let name = _str_get(idx)
+            let ptr = self.get_local_var(name)
+            if len(ptr) > 0:
+                let t = self.new_temp()
+                self.module_ir = self.module_ir + "  " + t + " = load i64, i64* " + ptr + "\n"
+                return t
+            return "0"
+        elif kind == NK_BINARY: return self.gen_binary(idx)
+        elif kind == NK_CALL: return self.gen_call(idx)
+        return "0"
+
+    fn gen_binary(idx: int) -> str:
+        let left = self.gen_expr(node_lefts[idx])
+        let right = self.gen_expr(node_rights[idx])
+        let op = _str_get(idx)
+        let t = self.new_temp()
+        if op == "+":
+            self.module_ir = self.module_ir + "  " + t + " = add i64 " + left + ", " + right + "\n"
+        elif op == "-":
+            self.module_ir = self.module_ir + "  " + t + " = sub i64 " + left + ", " + right + "\n"
+        elif op == "*":
+            self.module_ir = self.module_ir + "  " + t + " = mul i64 " + left + ", " + right + "\n"
+        elif op == "/":
+            self.module_ir = self.module_ir + "  " + t + " = sdiv i64 " + left + ", " + right + "\n"
+        elif op == "==":
+            self.module_ir = self.module_ir + "  " + t + " = icmp eq i64 " + left + ", " + right + "\n"
+        elif op == "!=":
+            self.module_ir = self.module_ir + "  " + t + " = icmp ne i64 " + left + ", " + right + "\n"
+        else:
+            self.module_ir = self.module_ir + "  " + t + " = add i64 " + left + ", " + right + "\n"
+        return t
+
+    fn gen_call(idx: int) -> str:
+        let callee = _str_get(idx)
+        if callee == "print":
+            let arg = node_nexts[idx]
+            if arg >= 0:
+                let val = self.gen_expr(arg)
+                self.module_ir = self.module_ir + "  call i32 (i8*, ...) @printf(i8* " + val + ")\n"
+            return "0"
+        elif callee == "len":
+            let arg = node_nexts[idx]
+            if arg >= 0:
+                let val = self.gen_expr(arg)
+                let t = self.new_temp()
+                self.module_ir = self.module_ir + "  " + t + " = call i64 @strlen(i8* " + val + ")\n"
+                return t
+            return "0"
+        let args = ""
+        mut arg_count = 0
+        let arg = node_nexts[idx]
+        mut cur = arg
+        while cur >= 0:
+            let val = self.gen_expr(cur)
+            if arg_count == 0:
+                args = "i64 " + val
+            else:
+                args = args + ", i64 " + val
+            arg_count = arg_count + 1
+            cur = node_nexts[cur]
+        let t = self.new_temp()
+        self.module_ir = self.module_ir + "  " + t + " = call i64 @" + callee + "(" + args + ")\n"
+        return t

@@ -1,0 +1,27 @@
+fn main() -> int:
+    mut limit = 10000000
+    if len(argv(1)) > 0:
+        limit = atoi(argv(1))
+
+    mut primes = alloc_bytes(limit)
+    for i in 0..limit:
+        primes[i] = 1
+    primes[0] = 0
+    primes[1] = 0
+
+    mut p = 2
+    while p * p < limit:
+        if primes[p] == 1:
+            mut i = p * p
+            while i < limit:
+                primes[i] = 0
+                i += p
+        p += 1
+
+    mut count = 0
+    for i in 0..limit:
+        if primes[i] == 1:
+            count += 1
+
+    print("", count)
+    return 0

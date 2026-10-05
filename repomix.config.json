@@ -1,0 +1,31 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "output": {
+    "filePath": "ctx/lumina.xml",
+    "style": "xml",
+    "fileSummary": true,
+    "directoryStructure": true,
+    "removeComments": true,
+    "compress": true,
+    "topFilesLength": 15,
+    "showLineNumbers": false
+  },
+  "include": [],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "**/__pycache__/**", "**/*.pyc",
+      "**/.venv/**", "**/node_modules/**",
+      "**/*.ll", "**/*.wasm", "**/*.o", "**/*.obj",
+      "**/benchmarks/results/**",
+      "**/examples/**/*.ll",
+      "lumina-vscode/package-lock.json",
+      "output.ll",
+      "playground.html",
+      "ctx/**",
+      "site/**"
+    ]
+  },
+  "security": { "checkSecretFiles": true }
+}

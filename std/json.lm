@@ -1,0 +1,42 @@
+import "std/str"
+
+## Módulo de JSON (std/json)
+## Parser simples para extrair valores de strings JSON.
+
+## Extrai um valor de string de uma chave JSON.
+## Ex: get_str("{\"name\":\"Lumina\"}", "name") -> "Lumina"
+fn get_str(json: str, key: str) -> str:
+    # Procura por "key":"value" (sem espaço após os dois-pontos)
+    let search_str = "\"" + key + "\":\""
+    let pos = find(json, search_str)
+    if pos == -1:
+        return ""
+    
+    let start = pos + len(search_str)
+    # Procura o fechamento da aspa
+    let end = find(substr(json, start, 100), "\"")
+    if end == -1:
+        return ""
+    
+    return substr(json, start, end)
+
+## Extrai um valor inteiro de uma chave JSON.
+## Ex: get_int("{\"version\":10}", "version") -> 10
+fn get_int(json: str, key: str) -> int:
+    # Procura por "key":valor (sem espaço após os dois-pontos)
+    let search_str = "\"" + key + "\":"
+    let pos = find(json, search_str)
+    if pos == -1:
+        return 0
+    
+    let start = pos + len(search_str)
+    mut result = ""
+    mut i = 0
+    while i < 20:
+        let c = json[start + i]
+        if c >= 48 and c <= 57: # 0-9
+            result = result + chr(c)
+        else:
+            break
+        i += 1
+    return atoi(result)

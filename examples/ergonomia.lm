@@ -1,0 +1,39 @@
+fn dobrar(x: int) -> int:
+    return x * 2
+
+fn somar_um(x: int) -> int:
+    return x + 1
+
+fn processar_dados(id: int):
+    defer print("Liberando recursos do ID:", id)
+
+    # 1. Interpolação de Strings (prefixo $ obrigatório)
+    print($"Processando dados para o usuario {id}...")
+
+    if id == 2:
+        print("Erro encontrado, retornando cedo!")
+        return
+
+    print("Processo concluído com sucesso.")
+
+fn main() -> int:
+    processar_dados(1)
+    processar_dados(2)
+
+    let porta = 8080
+    print($"Servidor rodando na porta {porta}...")
+
+    # 2. Operador Pipe (|>)
+    let resultado = 5 |> dobrar |> somar_um |> dobrar
+    print("Resultado do Pipe:", resultado)
+
+    return 0
+
+# 3. Test Runner Nativo
+test "deve somar dois numeros":
+    let res = somar_um(4)
+    assert(res == 5)
+
+test "deve dobrar o valor":
+    let res = dobrar(10)
+    assert(res == 20)

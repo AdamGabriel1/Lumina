@@ -1,0 +1,2 @@
+[link]
+extra_objects = ["examples/ffi_helper.cpp"]

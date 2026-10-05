@@ -1,0 +1,34 @@
+import "std/raylib"
+
+fn main() -> int:
+    # Inicializa a janela 800x600
+    InitWindow(800, 600, "Lumina Engine - 2D Game")
+    
+    # Posição e velocidade da bola
+    mut ball_x = 400
+    mut ball_y = 300
+    mut speed_x = 5
+    mut speed_y = 5
+    
+    # Loop principal do jogo (Roda a 60 FPS)
+    while WindowShouldClose() == 0:
+        # 1. Update (Lógica do jogo)
+        ball_x += speed_x
+        ball_y += speed_y
+        
+        # Colisão com as paredes
+        if ball_x > 800 or ball_x < 0:
+            speed_x = -speed_x
+        if ball_y > 600 or ball_y < 0:
+            speed_y = -speed_y
+            
+        # 2. Draw (Renderização)
+        BeginDrawing()
+        ClearBackground(RAYWHITE)
+        DrawText("Lumina Engine!", 300, 250, 20, BLACK)
+        # Desenha um quadrado vermelho representando a bola
+        DrawText("O", ball_x, ball_y, 20, RED)
+        EndDrawing()
+        
+    CloseWindow()
+    return 0

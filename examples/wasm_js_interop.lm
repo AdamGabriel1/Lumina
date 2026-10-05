@@ -1,0 +1,9 @@
+# Importa uma função do JavaScript (não precisa definir o corpo)
+extern "wasm" fn js_alert(msg: str)
+
+# Exporta uma função para o JavaScript chamar
+export fn trigger_alert():
+    js_alert("Hello from Lumina WASM!")
+
+fn main() -> int:
+    return 0

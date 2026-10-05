@@ -1,0 +1,114 @@
+# std/math.lm — Funções matemáticas via FFI da libc + helpers em Lumina.
+
+extern fn pow(base: float, exp: float) -> float
+extern fn sqrt(val: float) -> float
+extern fn fabs(val: float) -> float
+extern fn floor(val: float) -> float
+extern fn ceil(val: float) -> float
+extern fn round(val: float) -> float
+extern fn abs(val: int) -> int
+extern fn rand() -> int
+extern fn srand(seed: int)
+
+fn potencia(base: float, exp: float) -> float:
+    return pow(base, exp)
+
+fn raiz_quadrada(val: float) -> float:
+    return sqrt(val)
+
+fn valor_absoluto(val: int) -> int:
+    return abs(val)
+
+fn chao(val: float) -> float:
+    return floor(val)
+
+fn teto(val: float) -> float:
+    return ceil(val)
+
+fn arredondar(val: float) -> float:
+    return round(val)
+
+fn abs_float(val: float) -> float:
+    return fabs(val)
+
+# ---------------------------------------------------------------------
+# Helpers em Lumina (sem libc)
+# ---------------------------------------------------------------------
+
+fn min(a: int, b: int) -> int:
+    if a < b:
+        return a
+    return b
+
+fn max(a: int, b: int) -> int:
+    if a > b:
+        return a
+    return b
+
+fn clamp(v: int, lo: int, hi: int) -> int:
+    if v < lo:
+        return lo
+    if v > hi:
+        return hi
+    return v
+
+fn gcd(a: int, b: int) -> int:
+    mut x = a
+    mut y = b
+    if x < 0:
+        x = -x
+    if y < 0:
+        y = -y
+    while y != 0:
+        let t = y
+        y = x % y
+        x = t
+    return x
+
+fn lcm(a: int, b: int) -> int:
+    if a == 0 or b == 0:
+        return 0
+    let g = gcd(a, b)
+    mut prod = a / g
+    if prod < 0:
+        prod = -prod
+    mut bb = b
+    if bb < 0:
+        bb = -bb
+    return prod * bb
+
+fn powi(base: int, exp: int) -> int:
+    if exp < 0:
+        return 0
+    mut result = 1
+    mut b = base
+    mut e = exp
+    while e > 0:
+        if (e & 1) == 1:
+            result = result * b
+        b = b * b
+        e = e >> 1
+    return result
+
+fn is_prime(n: int) -> int:
+    if n < 2:
+        return 0
+    if n < 4:
+        return 1
+    if (n & 1) == 0:
+        return 0
+    mut i = 3
+    while i * i <= n:
+        if n % i == 0:
+            return 0
+        i = i + 2
+    return 1
+
+fn random_int(lo: int, hi: int) -> int:
+    let span = hi - lo + 1
+    if span <= 0:
+        return lo
+    let r = rand()
+    if r < 0:
+        return lo
+    return lo + (r % span)

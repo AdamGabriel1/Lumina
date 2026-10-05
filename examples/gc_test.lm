@@ -1,0 +1,15 @@
+extern fn usleep(microseconds: int) -> int
+
+fn main() -> int:
+    print("Testando o Garbage Collector (Boehm GC)...")
+    mut i = 0
+    
+    while i < 1000000:
+        # Aloca uma string dinâmica a cada iteração
+        let lixo = "Lixo da memoria numero " + i
+        if i % 100000 == 0:
+            print("Alocou e descartou", i, "strings...")
+        i += 1
+        
+    print("Memoria limpa automaticamente! O PC nao travou.")
+    return 0

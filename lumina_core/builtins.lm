@@ -1,0 +1,60 @@
+# lumina_core/builtins.lm
+#
+# Lista canônica de builtins. Deve ser mantida em sincronia com
+# lumina/builtins.py.
+
+fn is_builtin(name: str) -> int:
+    if name == "print":         return 1
+    if name == "input":         return 1
+    if name == "atoi":          return 1
+    if name == "len":           return 1
+    if name == "alloc":         return 1
+    if name == "alloc_bytes":   return 1
+    if name == "free":          return 1
+    if name == "read_file":     return 1
+    if name == "write_file":    return 1
+    if name == "int":           return 1
+    if name == "float":         return 1
+    if name == "str":           return 1
+    if name == "argv":          return 1
+    if name == "chr":           return 1
+    if name == "http_response": return 1
+    if name == "black_box":     return 1
+    if name == "bytes":         return 1
+    if name == "copy":          return 1
+    if name == "stdin":         return 1
+    if name == "stdout":        return 1
+    if name == "stderr":        return 1
+    if name == "fgets":         return 1
+    if name == "fputs":         return 1
+    if name == "fflush":        return 1
+    if name == "getchar":       return 1
+    return 0
+
+fn builtin_ret(name: str) -> str:
+    if name == "print":         return "void"
+    if name == "input":         return "str"
+    if name == "atoi":          return "int"
+    if name == "len":           return "int"
+    if name == "alloc":         return "ptr"
+    if name == "alloc_bytes":   return "ptr"
+    if name == "free":          return "void"
+    if name == "read_file":     return "str"
+    if name == "write_file":    return "void"
+    if name == "int":           return "int"
+    if name == "float":         return "float"
+    if name == "str":           return "str"
+    if name == "argv":          return "str"
+    if name == "chr":           return "str"
+    if name == "http_response": return "str"
+    if name == "black_box":     return "int"
+    if name == "bytes":         return "[int]"
+    if name == "copy":          return "[int]"
+    if name == "stdin":         return "str"
+    if name == "stdout":        return "str"
+    if name == "stderr":        return "str"
+    if name == "fgets":         return "str"
+    if name == "fputs":         return "int"
+    if name == "fflush":        return "int"
+    if name == "getchar":       return "int"
+    return "int"

@@ -1,0 +1,89 @@
+# Emulador CHIP-8 com Variáveis Globais e Saída no Terminal
+
+# Variáveis Globais da CPU
+let screen_width = 64
+let screen_height = 32
+mut memory = alloc_bytes(4096)
+mut V = alloc_bytes(16)
+mut screen = alloc_bytes(screen_width * screen_height)
+mut pc = 0x200
+
+fn cls():
+    for i in 0..(screen_width * screen_height):
+        screen[i] = 32
+
+fn draw_screen():
+    # Buffer reutilizado por linha. Antes, `row = row + " "` alocava
+    # uma string nova por iteração (2048 alocações por chamada). A
+    # runtime freestanding (`--linker=self`) tem um alocador linear
+    # sem free — a folga de 64 KB acabava na 14ª linha.
+    #
+    # Agora: uma alocação de 65 bytes, reusada nas 32 linhas.
+    mut row = alloc_bytes(screen_width + 1)
+    mut y = 0
+    while y < screen_height:
+        mut x = 0
+        while x < screen_width:
+            let pixel = screen[y * screen_width + x]
+            if pixel == 35:
+                row[x] = 35   # '#'
+            else:
+                row[x] = 32   # ' '
+            x += 1
+        row[screen_width] = 0   # NUL terminator
+        print(row)
+        y += 1
+
+fn load_game():
+    # Opcode 00E0 (CLS)
+    memory[0x200] = 0x00
+    memory[0x201] = 0xE0
+    
+    # Opcode 6XNN (SET V0 = 0x0A)
+    memory[0x202] = 0x60
+    memory[0x203] = 0x0A
+    
+    # Opcode 7XNN (ADD V0 += 0x05 -> V0 = 0x0F)
+    memory[0x204] = 0x70
+    memory[0x205] = 0x05
+
+fn main() -> int:
+    print("Iniciando Emulador CHIP-8...")
+    cls()
+    load_game()
+
+    mut running = 1
+
+    while running == 1:
+        # PATCH: máscara 0xFF em ambos os bytes para tratá-los como unsigned.
+        # `memory[pc]` retorna i8 sign-extended; sem a máscara, byte 0xE0
+        # vira -32 e quebra o dispatch.
+        let opcode = ((memory[pc] & 0xFF) << 8) | (memory[pc + 1] & 0xFF)
+        
+        if opcode == 0x00E0:
+            cls()
+            pc += 2
+            
+        elif (opcode & 0xF000) == 0x6000:
+            let x = (opcode & 0x0F00) >> 8
+            let nn = opcode & 0x00FF
+            V[x] = nn
+            pc += 2
+            
+        elif (opcode & 0xF000) == 0x7000:
+            let x = (opcode & 0x0F00) >> 8
+            let nn = opcode & 0x00FF
+            V[x] = V[x] + nn
+            pc += 2
+            
+        else:
+            print("Opcode desconhecido:", opcode)
+            running = 0
+            
+        if pc >= 0x206:
+            running = 0
+            
+    draw_screen()
+    print("V0 (esperado 15):", V[0])
+    print("Emulador finalizado.")
+    return 0

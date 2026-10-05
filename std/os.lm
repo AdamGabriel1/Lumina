@@ -1,0 +1,61 @@
+## std/os.lm — Sistema operacional (env, cwd, exit, sleep).
+##
+## Uso:
+##   import "std/os"
+##
+##   let home = get_env("HOME")
+##   print("Home:", home)
+
+extern fn getenv(name: str) -> str
+extern fn exit(code: int)
+extern fn system(cmd: str) -> int
+extern fn getcwd(buf: str, size: int) -> str
+extern fn usleep(microseconds: int) -> int
+
+# ---------------------------------------------------------------------
+# Env vars
+# ---------------------------------------------------------------------
+
+## Retorna o valor de uma variável de ambiente, ou "" se não existir.
+fn get_env(name: str) -> str:
+    let v = getenv(name)
+    if v == nil:
+        return ""
+    return v
+
+## Retorna 1 se a variável de ambiente existe e não é vazia.
+fn has_env(name: str) -> int:
+    let v = getenv(name)
+    if v == nil:
+        return 0
+    if len(v) == 0:
+        return 0
+    return 1
+
+# ---------------------------------------------------------------------
+# Working directory
+# ---------------------------------------------------------------------
+
+## Retorna o diretório de trabalho atual (máx. 4095 chars).
+fn cwd() -> str:
+    let buf = alloc_bytes(4096)
+    let r = getcwd(buf, 4096)
+    if r == nil:
+        return ""
+    return buf as str
+
+# ---------------------------------------------------------------------
+# Controle de processo
+# ---------------------------------------------------------------------
+
+## Encerra o processo com o código dado. Nunca retorna.
+fn quit(code: int):
+    exit(code)
+
+## Roda um comando no shell. Retorna o exit code do comando.
+fn shell(cmd: str) -> int:
+    return system(cmd)
+
+## Dorme por `ms` milissegundos.
+fn sleep(ms: int):
+    usleep(ms * 1000)

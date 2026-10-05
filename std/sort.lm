@@ -1,0 +1,78 @@
+# std/sort.lm — Ordenação com e sem comparator.
+#
+# Callbacks de comparação têm assinatura `fn(int, int) -> int`.
+# Retornam < 0 se a < b, 0 se iguais, > 0 se a > b.
+#
+# Limitação: `sort` assume que `arr` é `i64*` (o retorno de `alloc`).
+
+fn _cmp_asc(a: int, b: int) -> int:
+    return a - b
+
+fn _insertion_sort(arr: ptr, n: int, cmp: fn(int, int) -> int):
+    mut i = 1
+    while i < n:
+        let key = arr[i]
+        mut j = i - 1
+        while j >= 0:
+            let aj = arr[j]
+            let c = cmp(aj, key)
+            if c <= 0:
+                break
+            arr[j + 1] = aj
+            j = j - 1
+        arr[j + 1] = key
+        i = i + 1
+
+fn _partition(arr: ptr, low: int, high: int, cmp: fn(int, int) -> int) -> int:
+    let pivot = arr[high]
+    mut i = low - 1
+    mut j = low
+    while j < high:
+        let aj = arr[j]
+        let c = cmp(aj, pivot)
+        if c <= 0:
+            i = i + 1
+            let tmp = arr[i]
+            arr[i] = aj
+            arr[j] = tmp
+        j = j + 1
+    let tmp2 = arr[i + 1]
+    arr[i + 1] = pivot
+    arr[high] = tmp2
+    return i + 1
+
+fn _quicksort_rec(arr: ptr, low: int, high: int, cmp: fn(int, int) -> int):
+    if low >= high:
+        return
+    let pi = _partition(arr, low, high, cmp)
+    _quicksort_rec(arr, low, pi - 1, cmp)
+    _quicksort_rec(arr, pi + 1, high, cmp)
+
+## Ordena `arr` (i64) em ordem crescente.
+## Insertion sort para n ≤ 16, quicksort acima.
+fn sort(arr: ptr, n: int):
+    if n <= 1:
+        return
+    if n <= 16:
+        _insertion_sort(arr, n, _cmp_asc)
+    else:
+        _quicksort_rec(arr, 0, n - 1, _cmp_asc)
+
+## Ordena `arr` com um comparator customizado.
+## `cmp(a, b)` retorna < 0, 0 ou > 0.
+fn sort_by(arr: ptr, n: int, cmp: fn(int, int) -> int):
+    if n <= 1:
+        return
+    if n <= 16:
+        _insertion_sort(arr, n, cmp)
+    else:
+        _quicksort_rec(arr, 0, n - 1, cmp)
+
+## Retorna 1 se `arr` está ordenado (crescente); 0 se não.
+fn is_sorted(arr: ptr, n: int) -> int:
+    mut i = 1
+    while i < n:
+        if arr[i - 1] > arr[i]:
+            return 0
+        i = i + 1
+    return 1

@@ -1,0 +1,123 @@
+## std/path.lm — Manipulação de caminhos de arquivo.
+##
+## Uso:
+##   import "std/path"
+##
+##   let p = join("src", "main.lm")
+##   print(basename(p))
+##   print(dirname(p))
+
+extern fn access(pathname: str, mode: int) -> int
+extern fn opendir(pathname: str) -> str
+extern fn closedir(dirp: str) -> int
+
+# access(2) modes (POSIX)
+let F_OK = 0
+let X_OK = 1
+let W_OK = 2
+let R_OK = 4
+
+## Retorna 1 se o caminho existe (arquivo, dir, socket, etc).
+fn exists(p: str) -> int:
+    let r = access(p, F_OK)
+    if r == 0:
+        return 1
+    return 0
+
+## Retorna 1 se o processo pode ler o caminho.
+fn is_readable(p: str) -> int:
+    let r = access(p, R_OK)
+    if r == 0:
+        return 1
+    return 0
+
+## Retorna 1 se `p` é um diretório.
+fn is_dir(p: str) -> int:
+    let d = opendir(p)
+    if d == nil:
+        return 0
+    closedir(d)
+    return 1
+
+## Junta dois segmentos com "/". Não normaliza.
+fn join(a: str, b: str) -> str:
+    if len(a) == 0:
+        return b
+    if len(b) == 0:
+        return a
+    let last = a[len(a) - 1]
+    if last == 47:
+        return a + b
+    return a + "/" + b
+
+## Retorna o último componente do caminho.
+fn basename(p: str) -> str:
+    let n = len(p)
+    if n == 0:
+        return ""
+    mut end = n - 1
+    while end >= 0 and p[end] == 47:
+        end = end - 1
+    if end < 0:
+        return "/"
+    mut start = end
+    while start >= 0 and p[start] != 47:
+        start = start - 1
+    return p[start + 1..end + 1]
+
+## Retorna o diretório do caminho.
+fn dirname(p: str) -> str:
+    let n = len(p)
+    if n == 0:
+        return "."
+    mut end = n - 1
+    while end >= 0 and p[end] == 47:
+        end = end - 1
+    if end < 0:
+        return "/"
+    mut slash = end
+    while slash >= 0 and p[slash] != 47:
+        slash = slash - 1
+    if slash < 0:
+        return "."
+    while slash > 0 and p[slash] == 47:
+        slash = slash - 1
+    return p[..slash + 1]
+
+## Retorna a extensão do arquivo, incluindo o ponto.
+fn extension(p: str) -> str:
+    let n = len(p)
+    if n == 0:
+        return ""
+    mut i = n - 1
+    while i >= 0:
+        let c = p[i]
+        if c == 46:
+            return p[i..n]
+        if c == 47:
+            return ""
+        i = i - 1
+    return ""
+
+## Retorna o caminho sem a extensão.
+fn stem(p: str) -> str:
+    let n = len(p)
+    if n == 0:
+        return ""
+    mut i = n - 1
+    while i >= 0:
+        let c = p[i]
+        if c == 46:
+            return p[..i]
+        if c == 47:
+            break
+        i = i - 1
+    return p
+
+## Retorna 1 se o caminho é absoluto (começa com `/`).
+fn is_absolute(p: str) -> int:
+    if len(p) == 0:
+        return 0
+    if p[0] == 47:
+        return 1
+    return 0

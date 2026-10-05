@@ -1,0 +1,171 @@
+# lumina/semantic.lm
+import "lumina_core/parser"
+import "lumina/builtins"
+import "lumina/errors"
+
+struct Scope:
+    names: ptr
+    types: ptr
+    size: int
+
+struct SemanticAnalyzer:
+    scopes: ptr
+    scope_count: int
+    functions: ptr
+    func_count: int
+
+impl SemanticAnalyzer:
+    fn init():
+        self.scopes = alloc(100)
+        self.scope_count = 0
+        self.functions = alloc(1024)
+        self.func_count = 0
+        self.push_scope()
+
+    fn push_scope():
+        let s = alloc(100)
+        s.names = alloc(64)
+        s.types = alloc(64)
+        s.size = 0
+        self.scopes[self.scope_count] = s
+        self.scope_count = self.scope_count + 1
+
+    fn pop_scope():
+        self.scope_count = self.scope_count - 1
+
+    fn declare_var(name: str, var_type: str):
+        let s = self.scopes[self.scope_count - 1] as Scope
+        s.names[s.size] = name as int
+        s.types[s.size] = var_type as int
+        s.size = s.size + 1
+
+    fn lookup_var(name: str) -> str:
+        mut i = self.scope_count - 1
+        while i >= 0:
+            let s = self.scopes[i] as Scope
+            mut j = 0
+            while j < s.size:
+                if s.names[j] as str == name:
+                    return s.types[j] as str
+                j = j + 1
+            i = i - 1
+        return ""
+
+    fn register_function(name: str):
+        self.functions[self.func_count] = name as int
+        self.func_count = self.func_count + 1
+
+    fn is_function(name: str) -> int:
+        mut i = 0
+        while i < self.func_count:
+            if self.functions[i] as str == name:
+                return 1
+            i = i + 1
+        return is_builtin(name)
+
+    fn analyze_program(root: int):
+        let decl = node_nexts[root]
+        mut cur = decl
+        while cur >= 0:
+            self.analyze_node(cur)
+            cur = node_nexts[cur]
+
+    fn analyze_node(idx: int) -> str:
+        if idx < 0: return "void"
+        let kind = node_kinds[idx]
+        if kind == NK_FUNCTION:
+            self.analyze_function(idx)
+            return "void"
+        elif kind == NK_VAR_DECL:
+            return self.analyze_var_decl(idx)
+        elif kind == NK_BINARY:
+            return self.analyze_binary(idx)
+        elif kind == NK_NUMBER:
+            return "int"
+        elif kind == NK_STRING:
+            return "str"
+        elif kind == NK_BOOL:
+            return "bool"
+        elif kind == NK_VARIABLE:
+            return self.analyze_variable(idx)
+        elif kind == NK_CALL:
+            return self.analyze_call(idx)
+        elif kind == NK_RETURN:
+            self.analyze_node(node_lefts[idx])
+            return "void"
+        elif kind == NK_IF:
+            self.analyze_if(idx)
+            return "void"
+        elif kind == NK_WHILE:
+            self.analyze_while(idx)
+            return "void"
+        return "unknown"
+
+    fn analyze_function(idx: int):
+        self.push_scope()
+        let params = node_lefts[idx]
+        mut cur = params
+        while cur >= 0:
+            self.declare_var(_str_get(cur), "int") # Simplificação
+            cur = node_nexts[cur]
+        let body = node_bodys[idx]
+        cur = body
+        while cur >= 0:
+            self.analyze_node(cur)
+            cur = node_nexts[cur]
+        self.pop_scope()
+
+    fn analyze_var_decl(idx: int) -> str:
+        let val_type = self.analyze_node(node_lefts[idx])
+        self.declare_var(_str_get(idx), val_type)
+        return val_type
+
+    fn analyze_binary(idx: int) -> str:
+        let left_type = self.analyze_node(node_lefts[idx])
+        let right_type = self.analyze_node(node_rights[idx])
+        let op = _str_get(idx)
+        if op == "==": return "bool"
+        if op == "!=": return "bool"
+        if op == "<": return "bool"
+        if op == ">": return "bool"
+        if op == "and": return "bool"
+        if op == "or": return "bool"
+        if left_type == "str" or right_type == "str": return "str"
+        if left_type == "float" or right_type == "float": return "float"
+        return "int"
+
+    fn analyze_variable(idx: int) -> str:
+        let name = _str_get(idx)
+        let var_type = self.lookup_var(name)
+        if len(var_type) > 0: return var_type
+        if self.is_function(name) == 1: return "fn"
+        return "int"
+
+    fn analyze_call(idx: int) -> str:
+        let callee_name = _str_get(idx)
+        if self.is_function(callee_name) == 0:
+            error("Função não declarada", "program.lm", node_lines[idx], node_cols[idx])
+        let arg = node_nexts[idx]
+        mut cur = arg
+        while cur >= 0:
+            self.analyze_node(cur)
+            cur = node_nexts[cur]
+        return builtin_ret(callee_name)
+
+    fn analyze_if(idx: int):
+        self.analyze_node(node_lefts[idx])
+        self.push_scope()
+        let body = node_bodys[idx]
+        mut cur = body
+        while cur >= 0:
+            self.analyze_node(cur)
+            cur = node_nexts[cur]
+        self.pop_scope()
+        let else_body = node_rights[idx]
+        if else_body >= 0:
+            self.push_scope()
+            cur = else_body
+            while cur >= 0:
+                self.analyze_node(cur)
+                cur = node_nexts[cur]
+            self.pop_scope()

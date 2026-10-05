@@ -1,0 +1,56 @@
+import "std/fs"
+
+# Tabela em memória (Array de 100 pares Chave/Valor = 200 ints)
+mut db = alloc(200)
+mut db_len = 0
+
+# Insere ou atualiza um valor
+fn put(key: int, val: int):
+    # Primeiro, verifica se a chave já existe para atualizar
+    mut i = 0
+    while i < db_len:
+        if db[i] == key:
+            db[i + 1] = val
+            print("Atualizado:", key, "->", val)
+            return
+        i += 2
+        
+    # Se não existe, insere no final
+    db[db_len] = key
+    db[db_len + 1] = val
+    db_len += 2
+    print("Inserido:", key, "->", val)
+
+# Busca um valor
+fn get(key: int) -> int:
+    mut i = 0
+    while i < db_len:
+        if db[i] == key:
+            return db[i + 1]
+        i += 2
+    return -1
+
+# Salva o banco de dados em disco (WAL simplificado)
+fn save():
+    mut data = ""
+    mut i = 0
+    while i < db_len:
+        # Serializa para "chave,valor\n"
+        data = data + db[i] + "," + db[i + 1] + "\n"
+        i += 2
+    write_file("lumina_db.txt", data)
+    print("💾 Banco de dados salvo em lumina_db.txt!")
+
+fn main() -> int:
+    print("🚀 LuminaDB iniciando...")
+    
+    put(1, 100)
+    put(2, 200)
+    put(3, 300)
+    put(2, 999) # Atualiza a chave 2
+    
+    let val = get(2)
+    print("Busca chave 2:", val)
+    
+    save()
+    return 0

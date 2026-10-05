@@ -1,0 +1,47 @@
+## std/log.lm - Logging minimalista com níveis.
+##
+## Uso:
+##   import "std/log"
+##
+##   fn main() -> int:
+##       set_level(LOG_LEVEL_INFO)
+##       log_debug("não aparece")
+##       log_info("iniciando")
+##       log_warn("cuidado")
+##       log_error("falhou")
+##       return 0
+
+## Níveis (do mais verboso ao mais restritivo)
+let LOG_LEVEL_DEBUG = 0
+let LOG_LEVEL_INFO  = 1
+let LOG_LEVEL_WARN  = 2
+let LOG_LEVEL_ERROR = 3
+
+## Nível mínimo global (mutável). Padrão: INFO.
+mut _log_min_level = 1
+
+## Define o nível mínimo. Mensagens com `level < _log_min_level`
+## são suprimidas.
+fn set_level(level: int):
+    _log_min_level = level
+
+## Retorna o nível mínimo atual.
+fn get_level() -> int:
+    return _log_min_level
+
+## Emite se `level >= _log_min_level`.
+fn _log(level: int, prefix: str, msg: str):
+    if level >= _log_min_level:
+        print(prefix, msg)
+
+fn log_debug(msg: str):
+    _log(LOG_LEVEL_DEBUG, "[DEBUG]", msg)
+
+fn log_info(msg: str):
+    _log(LOG_LEVEL_INFO, "[INFO] ", msg)
+
+fn log_warn(msg: str):
+    _log(LOG_LEVEL_WARN, "[WARN] ", msg)
+
+fn log_error(msg: str):
+    _log(LOG_LEVEL_ERROR, "[ERROR]", msg)

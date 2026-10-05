@@ -1,0 +1,23 @@
+struct Usuario:
+    id: int
+
+fn main() -> int:
+    # Usuário válido
+    mut u: Usuario
+    u.id = 42
+    let id1 = u.id
+    print("ID normal:", id1)
+
+    let id2 = u?.id
+    print("ID seguro (u?.id):", id2)
+
+    # Usuário NULL (nil) — null pointer real
+    let u_nulo: Usuario = nil
+
+    if u_nulo == nil:
+        print("u_nulo é nil")
+
+    let id3 = u_nulo?.id
+    print("ID seguro (nulo?.id):", id3)
+
+    return 0

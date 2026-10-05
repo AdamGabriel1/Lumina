@@ -1,0 +1,44 @@
+# Função Genérica: identidade, aceita e retorna qualquer tipo
+fn identidade<T>(x: T) -> T:
+    return x
+
+# Struct Genérica: caixa que guarda um valor T
+struct Box<T>:
+    data: T
+
+# NOVO: função que recebe Box<T> e valor T
+fn put<T>(b: Box<T>, val: T):
+    b.data = val
+
+# NOVO: função que lê Box<T> e retorna T
+fn get<T>(b: Box<T>) -> T:
+    return b.data
+
+fn main() -> int:
+    print("=== identidade<int> ===")
+    let a = identidade(42)
+    print(a)
+
+    print("=== identidade<float> ===")
+    let b = identidade(3.14)
+    print(b)
+
+    print("=== Box<int> com put/get ===")
+    mut box_i: Box<int>
+    put(box_i, 100)
+    let v_i = get(box_i)
+    print("valor:", v_i)
+
+    print("=== Box<float> com put/get ===")
+    mut box_f: Box<float>
+    put(box_f, 2.71)
+    let v_f = get(box_f)
+    print("valor:", v_f)
+
+    print("=== Box<str> com put/get ===")
+    mut box_s: Box<str>
+    put(box_s, "Lumina")
+    let v_s = get(box_s)
+    print("valor:", v_s)
+
+    return 0

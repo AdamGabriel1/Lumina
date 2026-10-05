@@ -1,0 +1,57 @@
+# 🚀 Bootstrapping: Um Lexer escrito na própria linguagem Lumina!
+# Este código prova que a Lumina pode ler e entender seu próprio código-fonte.
+
+fn main() -> int:
+    print("Iniciando Lexer nativo da Lumina...")
+    
+    # Código-fonte que queremos "tokenizar"
+    let code = "fn main(): print(42)"
+    let length = len(code)
+    
+    mut i = 0
+    
+    # Loop principal do Lexer (Fetch)
+    while i < length:
+        let c = code[i]
+        
+        # Ignora espaços (ASCII 32)
+        if c == 32:
+            i += 1
+            continue
+            
+        # Se for Letra (A-Z, a-z) ou Underline (_): Lê um Identificador
+        elif (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95:
+            mut word = ""
+            while i < length:
+                let ch = code[i]
+                if (ch >= 65 and ch <= 90) or (ch >= 97 and ch <= 122) or (ch >= 48 and ch <= 57) or ch == 95:
+                    word = word + chr(ch)
+                    i += 1
+                else:
+                    break
+            print("IDENT:", word)
+            
+        # Se for Número (0-9): Lê um Número
+        elif c >= 48 and c <= 57:
+            mut num = ""
+            while i < length:
+                let nch = code[i]
+                if nch >= 48 and nch <= 57:
+                    num = num + chr(nch)
+                    i += 1
+                else:
+                    break
+            print("NUMBER:", num)
+            
+        # Se for Símbolo/Operador: Imprime direto
+        else:
+            if c == 40:
+                print("OP: (")
+            elif c == 41:
+                print("OP: )")
+            elif c == 58:
+                print("OP: :")
+            i += 1
+            
+    print("Análise Léxica concluída com sucesso!")
+    return 0

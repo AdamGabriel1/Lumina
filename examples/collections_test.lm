@@ -1,0 +1,53 @@
+import "std/vector"
+import "std/map"
+import "std/set"
+import "std/deque"
+
+fn main() -> int:
+    print("=== Vector ===")
+    mut v = new_vector()
+    v.push(10)
+    v.push(20)
+    v.push(30)
+    print("len:", v.len)
+    print("get(0):", v.get(0))
+    print("get(2):", v.get(2))
+    print("sum:", v.sum())
+    print("is_empty:", v.is_empty())
+
+    print("=== Map ===")
+    mut m = new_map()
+    m.insert(10, 100)
+    m.insert(26, 200)
+    m.insert(42, 999)
+    print("get(10):", m.get(10))
+    print("get(26):", m.get(26))
+    print("get(42):", m.get(42))
+    print("get(99):", m.get(99))
+    print("contains(10):", m.contains(10))
+    print("contains(99):", m.contains(99))
+
+    print("=== Set ===")
+    mut s = new_set()
+    s.add(1)
+    s.add(2)
+    s.add(3)
+    s.add(1)
+    print("size:", s.size)
+    print("contains(1):", s.contains(1))
+    print("contains(99):", s.contains(99))
+
+    print("=== Deque ===")
+    mut d = new_deque()
+    d.push_back(1)
+    d.push_back(2)
+    d.push_front(0)
+    print("size:", d.size)
+    print("get(0):", d.get(0))
+    print("get(1):", d.get(1))
+    print("get(2):", d.get(2))
+    print("pop_front:", d.pop_front())
+    print("pop_back:", d.pop_back())
+    print("size após pops:", d.size)
+
+    return 0

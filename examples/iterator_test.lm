@@ -1,0 +1,18 @@
+fn main() -> int:
+    print("Testando Iteradores...")
+    
+    # Iterando sobre um Array estático
+    let numeros = [10, 20, 30, 40, 50]
+    
+    print("Iterando Array:")
+    for num in numeros:
+        print("Valor:", num)
+        
+    # Iterando sobre uma String (caractere por caractere)
+    let texto = "Lumina"
+    
+    print("Iterando String:")
+    for c in texto:
+        print("Char ASCII:", c)
+        
+    return 0

@@ -1,0 +1,71 @@
+# 🚀 Mini SQL Query Engine (In-Memory Columnar Database)
+
+# Arrays Colunares (cada um suporta até 1000 registros)
+mut col_id = alloc(1000)
+mut col_age = alloc(1000)
+mut col_salary = alloc(1000)
+mut row_count = 0
+
+# Simula um INSERT INTO table (id, age, salary) VALUES (...)
+fn insert(id: int, age: int, salary: int):
+    col_id[row_count] = id
+    col_age[row_count] = age
+    col_salary[row_count] = salary
+    row_count += 1
+
+# Simula SELECT * FROM table
+fn select_all():
+    print("ID | Age | Salary")
+    print("------------------")
+    mut i = 0
+    while i < row_count:
+        print(col_id[i], col_age[i], col_salary[i])
+        i += 1
+
+# Simula SELECT * FROM table WHERE age > 30
+fn select_where_age_gt(val: int):
+    print("Query: SELECT * WHERE age >", val)
+    print("------------------")
+    mut i = 0
+    while i < row_count:
+        if col_age[i] > val:
+            print(col_id[i], col_age[i], col_salary[i])
+        i += 1
+
+# Simula SELECT SUM(salary) FROM table
+fn sum_salary() -> int:
+    mut total = 0
+    mut i = 0
+    while i < row_count:
+        total += col_salary[i]
+        i += 1
+    return total
+
+fn main() -> int:
+    print("🏗️  Iniciando Mini SQL Query Engine...")
+    
+    # Inserindo dados na tabela
+    insert(1, 25, 5000)
+    insert(2, 35, 8000)
+    insert(3, 42, 12000)
+    insert(4, 28, 6000)
+    insert(5, 31, 9000)
+    
+    print("Registros inseridos:", row_count)
+    print("")
+    
+    # 1. SELECT *
+    print("Executando: SELECT * FROM table")
+    select_all()
+    print("")
+    
+    # 2. SELECT * WHERE age > 30
+    select_where_age_gt(30)
+    print("")
+    
+    # 3. SELECT SUM(salary)
+    let total_salaries = sum_salary()
+    print("Executando: SELECT SUM(salary) FROM table")
+    print("Total de salários:", total_salaries)
+    
+    return 0

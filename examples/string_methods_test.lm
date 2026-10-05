@@ -1,0 +1,26 @@
+import "std/str"
+
+fn main() -> int:
+    let texto = "Lumina Language"
+    
+    print("Testando a Standard Library Nativa (Bootstrapping)...")
+    
+    # Métodos embutidos no codegen
+    let tem_lumina = texto.contains("Lumina")
+    print("Contém 'Lumina'?", tem_lumina)
+    
+    # NOVOS Métodos escritos em Lumina!
+    let maiuscula = to_upper(texto)
+    print("To Upper:", maiuscula)
+    
+    let minuscula = to_lower(maiuscula)
+    print("To Lower:", minuscula)
+    
+    let com_espacos = "   espacos   "
+    let sem_espacos = trim(com_espacos)
+    print("Trim:", sem_espacos)
+    
+    let acaba_com = ends_with(texto, "Language")
+    print("Ends with 'Language'?", acaba_com)
+    
+    return 0

@@ -1,0 +1,47 @@
+# std/list.lm - Lista Ligada (Linked List) 100% nativa em Lumina
+
+struct Node:
+    value: int
+    next: ptr
+
+struct List:
+    head: ptr
+    size: int
+
+fn new() -> List:
+    mut l: List
+    l.head = 0
+    l.size = 0
+    return l
+
+fn push(l: List, val: int):
+    # Aloca memória para o novo nó (Node = 2 ints = 16 bytes) e converte para ptr (i64*)
+    mut new_node = alloc_bytes(16) as ptr
+    new_node[0] = val
+    new_node[1] = 0
+    
+    if l.head == 0:
+        l.head = new_node as int
+    else:
+        mut curr = l.head
+        while curr != 0:
+            let curr_ptr = curr as ptr
+            let next_val = curr_ptr[1]
+            if next_val == 0:
+                curr_ptr[1] = new_node as int
+                break
+            curr = next_val
+    l.size += 1
+
+fn get(l: List, index: int) -> int:
+    mut curr = l.head
+    mut i = 0
+    while i < index and curr != 0:
+        let curr_ptr = curr as ptr
+        curr = curr_ptr[1]
+        i += 1
+        
+    if curr != 0:
+        let curr_ptr = curr as ptr
+        return curr_ptr[0]
+    return -1

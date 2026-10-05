@@ -1,0 +1,24 @@
+fn extrair_opcode(instrucao: int) -> int:
+    # Desloca 8 bits para a direita e isola os 8 bits superiores
+    return (instrucao >> 8) & 0xFF
+
+fn extrair_endereco(instrucao: int) -> int:
+    # Isola os 8 bits inferiores
+    return instrucao & 0x00FF
+
+fn main() -> int:
+    # Instrução fictícia: 0xA2F0 (Opcode A2, Endereço F0)
+    let instrucao = 0xA2F0
+    
+    let opcode = extrair_opcode(instrucao)
+    let endereco = extrair_endereco(instrucao)
+    
+    print("Instrução completa:", instrucao)
+    print("Opcode extraído (A2):", opcode)
+    print("Endereço extraído (F0):", endereco)
+    
+    # Testando Bitwise OR (|)
+    let combinado = opcode | 0x10
+    print("Opcode combinado com 0x10 (B2):", combinado)
+    
+    return 0

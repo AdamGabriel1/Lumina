@@ -1,0 +1,26 @@
+struct Point:
+    x: int
+    y: int
+
+fn main() -> int:
+    mut p: Point
+    p.x = 0
+    p.y = 0
+    
+    let msg = match p {
+        Point { x: 0, y: 0 } => "Origem",
+        Point { x: val_x, y: val_y } => "Outro ponto",
+        else => "Desconhecido"
+    }
+    print("Mensagem 1:", msg)
+    
+    p.x = 10
+    p.y = 20
+    let msg2 = match p {
+        Point { x: 0, y: 0 } => "Origem",
+        Point { x: val_x, y: val_y } => "Outro ponto",
+        else => "Desconhecido"
+    }
+    print("Mensagem 2:", msg2)
+    
+    return 0

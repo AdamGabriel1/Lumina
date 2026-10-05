@@ -1,0 +1,72 @@
+# Estrutura para guardar um par Chave-Valor do JSON
+struct JsonField:
+    key: str
+    value_type: int
+    str_val: str
+    num_val: int
+
+fn parse_json(json_str: str) -> str:
+    let len = len(json_str)
+    mut i = 0
+    
+    while i < len:
+        let c = json_str[i]
+        if c == 123 or c == 32 or c == 10:
+            i += 1
+        else:
+            break
+            
+    mut current_key = ""
+    mut current_val = ""
+    mut in_key = 0
+    mut in_val = 0
+    mut val_type = 0
+    
+    print("--- Iniciando Parser JSON ---")
+    
+    while i < len:
+        let c = json_str[i]
+        
+        if c == 34:
+            if in_key == 0 and in_val == 0:
+                in_key = 1
+                current_key = ""
+            elif in_key == 1:
+                in_key = 0
+            elif in_val == 0:
+                in_val = 1
+                current_val = ""
+                val_type = 0
+            elif in_val == 1 and val_type == 0:
+                in_val = 0
+                print("Chave:", current_key, "| Valor:", current_val)
+                
+        elif in_key == 1:
+            current_key = current_key + chr(c)
+            
+        elif in_val == 1 and val_type == 0:
+            current_val = current_val + chr(c)
+            
+        elif c >= 48 and c <= 57 and in_val == 0 and in_key == 0:
+            in_val = 1
+            current_val = chr(c)
+            val_type = 1
+            
+        elif in_val == 1 and val_type == 1 and c >= 48 and c <= 57:
+            current_val = current_val + chr(c)
+            
+        elif in_val == 1 and val_type == 1 and (c == 32 or c == 44 or c == 125):
+            in_val = 0
+            print("Chave:", current_key, "| Valor:", current_val)
+            
+        i += 1
+        
+    return "Parse concluído!"
+
+fn main() -> int:
+    let q = chr(34)
+    let json = "{" + q + "nome" + q + ":" + q + "Lumina" + q + "," + q + "versao" + q + ":1," + q + "veloz" + q + ":true}"
+    
+    let res = parse_json(json)
+    print(res)
+    return 0

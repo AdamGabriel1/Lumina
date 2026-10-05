@@ -1,0 +1,24 @@
+import "std/vector"
+
+fn main() -> int:
+    print("🚀 Testando Array Dinâmico (Vector)...")
+
+    mut v = new_vector()
+
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    v.push(4)
+    v.push(5)
+    v.push(6)
+    v.push(7)
+    v.push(8)
+    v.push(9)
+    v.push(10)
+
+    print("Tamanho final:", v.len)
+    print("Elemento 0:", v.get(0))
+    print("Elemento 4:", v.get(4))
+    print("Elemento 9:", v.get(9))
+
+    return 0

@@ -1,0 +1,61 @@
+import "std/http"
+import "std/epoll"
+
+struct Response:
+    status: int
+    body: str
+
+fn handle_request(path: str) -> Response:
+    return match path {
+        "/" => Response { status: 200, body: "Bem-vindo a Lumina!" },
+        "/health" => Response { status: 200, body: "Healthy" },
+        "/api" => Response { status: 200, body: "{\"status\":\"online\"}" },
+        else => Response { status: 404, body: "Not Found" }
+    }
+
+fn main() -> int:
+    let porta = 8080
+    let server_fd = iniciar(porta)
+    
+    if server_fd < 0:
+        print("Erro ao iniciar servidor")
+        return 1
+        
+    print("🚀 Lumina-HTTP rodando na porta", porta)
+    
+    let epfd = criar()
+    adicionar(epfd, server_fd)
+    
+    mut client_addr = alloc_bytes(16)
+    mut client_len_ptr = alloc_bytes(4)
+    client_len_ptr[0] = 16
+    mut request_buffer = alloc_bytes(1024)
+    
+    while true:
+        let events_ptr = esperar(epfd, 100)
+        if events_ptr != 0:
+            let client_fd = accept(server_fd, client_addr, client_len_ptr)
+            if client_fd >= 0:
+                recv(client_fd, request_buffer, 1024, 0)
+                
+                # Extrai o path da requisição HTTP (simplificado)
+                mut path = ""
+                mut i = 4 # Pula "GET "
+                while i < 100:
+                    let c = request_buffer[i]
+                    if c == 32 or c == 0: # Espaço ou fim
+                        break
+                    path = path + chr(c)
+                    i += 1
+                    
+                print("Requisição recebida:", path)
+                
+                let res = handle_request(path)
+                
+                # NOVO: Usa a função nativa http_response para montar a string
+                let http_resp = http_response(res.status, res.body)
+                
+                send(client_fd, http_resp, len(http_resp), 0)
+                close(client_fd)
+                
+    return 0

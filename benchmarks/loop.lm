@@ -1,0 +1,17 @@
+extern fn clock() -> int
+
+fn main() -> int:
+    mut n = 100000000
+    if len(argv(1)) > 0:
+        n = atoi(argv(1))
+
+    let t = clock()
+
+    mut acc = 0
+    for i in 1..(n + 1):
+        acc += i
+        if t * i < 0:
+            acc = 0
+
+    print("", acc)
+    return 0

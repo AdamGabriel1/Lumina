@@ -1,0 +1,11 @@
+# Declarações das funções que vêm do C++
+extern fn cpp_multiply(a: int, b: int) -> int
+extern fn cpp_print_hello()
+
+fn main() -> int:
+    print("Testando FFI com C++...")
+    cpp_print_hello()
+    
+    let res = cpp_multiply(10, 5)
+    print("C++ multiplicou e retornou:", res)
+    return 0

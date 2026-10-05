@@ -1,0 +1,52 @@
+## Módulo de I/O Assíncrono (std/epoll)
+## Usa o epoll nativo do Linux Kernel para multiplexação de I/O.
+
+# Constantes do Linux
+# EPOLL_CTL_ADD = 1, EPOLL_CTL_MOD = 3, EPOLLIN = 1, EPOLLOUT = 4
+
+extern fn epoll_create1(flags: int) -> int
+extern fn epoll_ctl(epfd: int, op: int, fd: int, event: ptr) -> int
+extern fn epoll_wait(epfd: int, events: ptr, maxevents: int, timeout: int) -> int
+
+# A struct epoll_event no Linux x64 tem 12 bytes:
+# 4 bytes (events) + 4 bytes (padding) + 8 bytes (data/u64)
+# Vamos alocar 16 bytes para alinhar a memória com segurança.
+let EVENT_SIZE = 16
+
+## Cria uma instância do epoll no Kernel
+fn criar() -> int:
+    let fd = epoll_create1(0)
+    if fd < 0:
+        print("Erro ao criar epoll")
+        return -1
+    return fd
+
+## Adiciona um socket (fd) ao monitoramento do epoll
+fn adicionar(epfd: int, socket_fd: int):
+    mut ev = alloc_bytes(EVENT_SIZE)
+    # Zera a memória
+    for i in 0..EVENT_SIZE:
+        ev[i] = 0
+        
+    # Define o evento como EPOLLIN (1) - Pronto para leitura
+    ev[0] = 1
+    
+    # Guarda o fd do socket no campo 'data' (bytes 8 a 11)
+    ev[8] = socket_fd % 256
+    ev[9] = (socket_fd / 256) % 256
+    
+    # EPOLL_CTL_ADD (1)
+    epoll_ctl(epfd, 1, socket_fd, ev)
+
+## Espera por eventos (bloqueante). Retorna o número de eventos prontos.
+fn esperar(epfd: int, max_events: int) -> ptr:
+    # Aloca um buffer para guardar os eventos retornados pelo Kernel
+    mut events = alloc_bytes(EVENT_SIZE * max_events)
+    let n = epoll_wait(epfd, events, max_events, -1) # -1 = bloqueia indefinidamente
+    
+    if n <= 0:
+        return 0 # Erro ou timeout
+        
+    # Em um runtime real, iteraríamos sobre 'events' para ver quais sockets estão prontos.
+    # Como não temos arrays de structs mapeados para o C ainda, retornamos o ponteiro.
+    return events

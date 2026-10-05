@@ -1,0 +1,23 @@
+# Teste de Ponteiros, Heap e Atribuição Composta
+fn main() -> int:
+    let tamanho = 3
+    mut arr = alloc(tamanho)
+    
+    arr[0] = 100
+    arr[1] = 200
+    arr[2] = 300
+    
+    mut soma = 0
+    for i in 0..tamanho:
+        soma += arr[i]
+        
+    print("Soma do array no Heap:", soma)
+    free(arr)
+    print("Memória liberada!")
+    
+    let x = 50
+    let ptr = &x
+    let val_ptr = *ptr
+    print("Valor via ponteiro:", val_ptr)
+    
+    return 0

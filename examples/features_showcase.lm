@@ -1,0 +1,67 @@
+# examples/features_showcase.lm
+
+struct Point:
+    x: int
+    y: int
+
+fn main() -> int:
+    # 1. F-Strings (Interpolação de String)
+    let name = "Lumina"
+    let version = 1
+    print($"Welcome to {name} v{version}!")
+
+    # 2. Métodos Nativos de String
+    let msg = "Hello World"
+    let msg_len = msg.len()
+    print($"Length of msg: {msg_len}")
+    
+    if msg.contains("World"):
+        print("Contains 'World' is true!")
+        
+    if msg.starts_with("Hello"):
+        print("Starts with 'Hello' is true!")
+        
+    let upper_msg = msg.upper()
+    print(upper_msg)
+
+    # 3. Operadores de Comparação Encadeados
+    let x = 5
+    if 0 < x < 10:
+        print("x is between 0 and 10")
+
+    # 4. Pattern Matching em Inteiros
+    let status_code = 404
+    let status_msg = match status_code:
+        200 => "OK"
+        404 => "Not Found"
+        500 => "Server Error"
+        else => "Unknown"
+    print(status_msg)
+
+    # 5. Pattern Matching em Strings
+    let command = "run"
+    match command:
+        "build" => print("Building...")
+        "run" => print("Running...")
+        "test" => print("Testing...")
+        else => print("Unknown command")
+
+    # 6. Structs e Pattern Matching (Destructuring)
+    let p = Point { x: 10, y: 20 }
+    
+    # Extrai os valores de p diretamente para as variáveis px e py
+    let sum = match p:
+        Point { x: px, y: py } => px + py
+        else => 0
+        
+    print($"Sum of point coords: {sum}")
+
+    # 7. Loops e Matemática
+    mut total = 0
+    mut i = 0
+    while i < 5:
+        total = total + i
+        i = i + 1
+    print($"Sum 0..5 = {total}")
+
+    return 0

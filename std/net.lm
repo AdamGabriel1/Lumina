@@ -1,0 +1,67 @@
+## Módulo de Rede (std/net)
+## Encapsula as chamadas de socket do POSIX para criar servidores TCP.
+
+extern fn socket(domain: int, sock_type: int, protocol: int) -> int
+extern fn setsockopt(sockfd: int, level: int, optname: int, optval: str, optlen: int) -> int
+extern fn bind(sockfd: int, addr: str, addrlen: int) -> int
+extern fn listen(sockfd: int, backlog: int) -> int
+extern fn accept(sockfd: int, addr: str, addrlen: str) -> int
+extern fn recv(sockfd: int, buf: str, len: int, flags: int) -> int
+extern fn send(sockfd: int, buf: str, len: int, flags: int) -> int
+extern fn close(fd: int) -> int
+
+# NOVO: connect para Proxy Reverso
+extern fn connect(sockfd: int, addr: str, addrlen: int) -> int
+
+## Inicia um servidor TCP na porta especificada.
+fn iniciar(porta: int) -> int:
+    let server_fd = socket(2, 1, 0)
+    if server_fd < 0:
+        return -1
+        
+    mut reuse = alloc_bytes(4)
+    reuse[0] = 1
+    setsockopt(server_fd, 1, 2, reuse, 4)
+        
+    mut addr = alloc_bytes(16)
+    for i in 0..16:
+        addr[i] = 0
+        
+    addr[0] = 2
+    addr[2] = porta / 256
+    addr[3] = porta % 256
+    
+    let bind_res = bind(server_fd, addr, 16)
+    if bind_res < 0:
+        close(server_fd)
+        return -1
+        
+    listen(server_fd, 10)
+    return server_fd
+
+## Conecta a um backend (ex: localhost:3000)
+fn conectar_backend(porta: int) -> int:
+    let fd = socket(2, 1, 0)
+    if fd < 0:
+        return -1
+        
+    mut addr = alloc_bytes(16)
+    for i in 0..16:
+        addr[i] = 0
+        
+    addr[0] = 2 # AF_INET
+    addr[2] = porta / 256
+    addr[3] = porta % 256
+    
+    # 127.0.0.1 (Little Endian)
+    addr[4] = 127
+    addr[5] = 0
+    addr[6] = 0
+    addr[7] = 1
+    
+    let res = connect(fd, addr, 16)
+    if res < 0:
+        close(fd)
+        return -1
+        
+    return fd

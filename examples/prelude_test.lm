@@ -1,0 +1,34 @@
+# Não precisamos mais declarar Option ou Result aqui!
+
+fn dividir(a: int, b: int) -> Result:
+    if b == 0:
+        return Err(1)
+    return Ok(a / b)
+
+fn main() -> int:
+    print("Testando Standard Prelude (Auto-import)...")
+    
+    let res1 = dividir(10, 2)
+    let res2 = dividir(10, 0)
+    
+    match res1:
+        case Ok(val):
+            print("Divisão 1 bem-sucedida:", val)
+        case Err(e):
+            print("Erro na divisão 1:", e)
+            
+    match res2:
+        case Ok(val):
+            print("Divisão 2 bem-sucedida:", val)
+        case Err(e):
+            print("Erro na divisão 2:", e)
+            
+    # Option também está disponível!
+    let opt = Some(42)
+    match opt:
+        case Some(v):
+            print("Option contém:", v)
+        case None:
+            print("Option está vazio")
+            
+    return 0

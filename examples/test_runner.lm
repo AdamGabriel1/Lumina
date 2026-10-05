@@ -1,0 +1,25 @@
+fn somar(a: int, b: int) -> int:
+    return a + b
+
+# Bloco de Teste 1
+test "deve somar dois numeros positivos":
+    let res = somar(2, 3)
+    assert(res == 5)
+
+# Bloco de Teste 2
+test "deve somar numeros negativos":
+    let res = somar(-5, 10)
+    assert(res == 5)
+
+fn main() -> int:
+    print("Iniciando Test Runner...")
+    
+    # Executando os testes manualmente (no futuro, a CLI fará isso sozinha)
+    test_deve_somar_dois_numeros_positivos()
+    print("Teste 1 passou.")
+    
+    test_deve_somar_numeros_negativos()
+    print("Teste 2 passou.")
+    
+    print("Todos os testes passaram com sucesso!")
+    return 0

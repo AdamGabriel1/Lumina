@@ -1,0 +1,46 @@
+import "std/iter"
+
+fn main() -> int:
+    let n = 5
+    mut arr = alloc(n)
+    arr[0] = 1
+    arr[1] = 2
+    arr[2] = 3
+    arr[3] = 4
+    arr[4] = 5
+
+    print("=== Array original ===")
+    print("Soma:", sum(arr, n))
+    print("Produto:", product(arr, n))
+    print("Min:", min(arr, n))
+    print("Max:", max(arr, n))
+
+    print("=== map ===")
+    # Dobra cada elemento via lambda
+    let dobrados = map(arr, n, fn(x: int) -> int: x * 2)
+    print("Dobrados somam:", sum(dobrados, n))
+
+    print("=== filter ===")
+    # Só pares (predicado via lambda)
+    let pares = filter(arr, n, fn(x: int) -> int: (x % 2) == 0)
+    let npares = count_if(arr, n, fn(x: int) -> int: (x % 2) == 0)
+    print("Quantidade de pares:", npares)
+    print("Soma dos pares:", sum(pares, npares))
+
+    print("=== all / any ===")
+    print("Todos positivos?", all(arr, n, fn(x: int) -> int: x > 0))
+    print("Algum > 3?", any(arr, n, fn(x: int) -> int: x > 3))
+
+    print("=== find_index ===")
+    let idx = find_index(arr, n, fn(x: int) -> int: x == 4)
+    print("Índice do 4:", idx)
+
+    print("=== for_each ===")
+    for_each(arr, n, fn(x: int) -> int: x + 10)
+    print("Após +10, soma:", sum(arr, n))
+
+    print("=== reverse ===")
+    reverse(arr, n)
+    print("Primeiro elemento após reverse:", arr[0])
+
+    return 0

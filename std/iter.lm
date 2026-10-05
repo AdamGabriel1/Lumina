@@ -1,0 +1,148 @@
+# std/iter.lm - Adaptadores funcionais para arrays.
+#
+# Todos os callbacks têm assinatura `fn(int) -> int`. Predicados
+# retornam != 0 para true. Assinaturas tipadas permitem checagem
+# em compile-time ao passar lambdas ou funções nomeadas.
+
+## Conta quantos elementos satisfazem `pred` (!= 0).
+fn count_if(arr: ptr, n: int, pred: fn(int) -> int) -> int:
+    mut count = 0
+    mut i = 0
+    while i < n:
+        if pred(arr[i]) != 0:
+            count += 1
+        i += 1
+    return count
+
+## Aplica `f` a cada elemento e retorna um novo array (heap).
+## O tamanho do resultado é o mesmo do original (`n`).
+fn map(arr: ptr, n: int, f: fn(int) -> int) -> ptr:
+    let out = alloc(n)
+    mut i = 0
+    while i < n:
+        out[i] = f(arr[i])
+        i += 1
+    return out
+
+## Filtra elementos onde `pred` retorna != 0.
+## O resultado tem tamanho `count_if(arr, n, pred)`.
+## Use count_if() antes se precisar do tamanho exato.
+fn filter(arr: ptr, n: int, pred: fn(int) -> int) -> ptr:
+    let out = alloc(n)
+    mut count = 0
+    mut i = 0
+    while i < n:
+        if pred(arr[i]) != 0:
+            out[count] = arr[i]
+            count += 1
+        i += 1
+    return out
+
+## Aplica `f` a cada elemento e soma os resultados.
+fn sum_by(arr: ptr, n: int, f: fn(int) -> int) -> int:
+    mut total = 0
+    mut i = 0
+    while i < n:
+        total += f(arr[i])
+        i += 1
+    return total
+
+## Retorna 1 se `pred` != 0 para TODOS os elementos; senão 0.
+fn all(arr: ptr, n: int, pred: fn(int) -> int) -> int:
+    mut i = 0
+    while i < n:
+        if pred(arr[i]) == 0:
+            return 0
+        i += 1
+    return 1
+
+## Retorna 1 se `pred` != 0 para ALGUM elemento; senão 0.
+fn any(arr: ptr, n: int, pred: fn(int) -> int) -> int:
+    mut i = 0
+    while i < n:
+        if pred(arr[i]) != 0:
+            return 1
+        i += 1
+    return 0
+
+## Retorna o índice do primeiro elemento que satisfaz `pred`,
+## ou -1 se nenhum.
+fn find_index(arr: ptr, n: int, pred: fn(int) -> int) -> int:
+    mut i = 0
+    while i < n:
+        if pred(arr[i]) != 0:
+            return i
+        i += 1
+    return -1
+
+## Retorna a soma de todos os elementos.
+fn sum(arr: ptr, n: int) -> int:
+    mut total = 0
+    mut i = 0
+    while i < n:
+        total += arr[i]
+        i += 1
+    return total
+
+## Retorna o produto de todos os elementos.
+fn product(arr: ptr, n: int) -> int:
+    mut result = 1
+    mut i = 0
+    while i < n:
+        result *= arr[i]
+        i += 1
+    return result
+
+## Retorna o menor elemento. Assume n > 0.
+fn min(arr: ptr, n: int) -> int:
+    mut result = arr[0]
+    mut i = 1
+    while i < n:
+        if arr[i] < result:
+            result = arr[i]
+        i += 1
+    return result
+
+## Retorna o maior elemento. Assume n > 0.
+fn max(arr: ptr, n: int) -> int:
+    mut result = arr[0]
+    mut i = 1
+    while i < n:
+        if arr[i] > result:
+            result = arr[i]
+        i += 1
+    return result
+
+## Copia os `n` elementos de `arr` para um novo array no heap.
+fn copy(arr: ptr, n: int) -> ptr:
+    let out = alloc(n)
+    mut i = 0
+    while i < n:
+        out[i] = arr[i]
+        i += 1
+    return out
+
+## Preenche `arr` com `value` por `n` posições.
+fn fill(arr: ptr, n: int, value: int):
+    mut i = 0
+    while i < n:
+        arr[i] = value
+        i += 1
+
+## Aplica `f` a cada elemento in-place.
+fn for_each(arr: ptr, n: int, f: fn(int) -> int):
+    mut i = 0
+    while i < n:
+        arr[i] = f(arr[i])
+        i += 1
+
+## Reverte `arr` in-place.
+fn reverse(arr: ptr, n: int):
+    mut i = 0
+    mut j = n - 1
+    while i < j:
+        let tmp = arr[i]
+        arr[i] = arr[j]
+        arr[j] = tmp
+        i += 1
+        j -= 1

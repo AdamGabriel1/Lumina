@@ -1,0 +1,26 @@
+fn avaliar(n: int) -> int:
+    # O match agora retorna um valor diretamente para o 'return'!
+    return match n {
+        1 => 100,
+        2 => 200,
+        3 => 300,
+        else => 999
+    }
+
+fn main() -> int:
+    print("Testando Match Expressions...")
+    
+    let r1 = avaliar(1)
+    let r2 = avaliar(2)
+    let r3 = avaliar(3)
+    let r4 = avaliar(10)
+    
+    print("Avaliar 1:", r1)
+    print("Avaliar 2:", r2)
+    print("Avaliar 3:", r3)
+    print("Avaliar 10:", r4)
+    
+    # Também pode ser usado inline em prints!
+    print("Inline:", match 2 { 1 => 10, 2 => 20, else => 0 })
+    
+    return 0

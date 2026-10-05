@@ -1,0 +1,15 @@
+# Não inclui o que já está no git ou é gerado
+.gitignore
+.vscode/**
+.vscode-test/**
+**/.gitignore
+**/.git
+**/node_modules/**
+**/__pycache__/**
+**/*.pyc
+**/.pytest_cache/**
+
+# Não inclui arquivos de teste/dev
+*.vsix
+*.log
+tests/**

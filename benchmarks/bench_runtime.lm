@@ -1,0 +1,35 @@
+extern fn clock() -> int
+
+fn somar(a: int, b: int) -> int:
+    return a + b
+
+fn dividir(a: int, b: int) -> int:
+    if b == 0:
+        return 0
+    return a / b
+
+fn main() -> int:
+    # Pega o argumento da linha de comando nativamente
+    let limit_str = argv(1)
+    
+    # Precisamos de 'mut' para podermos alterar o valor de 'limit'
+    mut limit = 10000000
+    if len(limit_str) > 0:
+        limit = atoi(limit_str)
+    
+    let start = clock()
+    
+    mut x = 0
+    for i in 0..limit:
+        x += i
+        
+    print("Resultado:", x)
+    
+    let end = clock()
+    
+    let diff = end - start
+    let diff_f = diff as float
+    let sec = diff_f / 1000000.0
+    
+    print("Lumina Runtime:", sec, "segundos")
+    return 0

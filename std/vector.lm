@@ -1,0 +1,85 @@
+## Vector: array dinâmico que cresce automaticamente.
+## Uso:
+##   mut v = Vector { data: none, len: 0, cap: 0 }
+##   v.push(10)
+##   v.push(20)
+##   print(v.get(0))
+struct Vector:
+    data: ptr
+    len: int
+    cap: int
+
+impl Vector:
+    ## Cria um Vector vazio.
+    fn new() -> Vector:
+        mut v: Vector
+        v.data = none
+        v.len = 0
+        v.cap = 0
+        return v
+
+    ## Garante que o Vector tenha capacidade >= min_cap.
+    fn reserve(min_cap: int):
+        if min_cap <= self.cap:
+            return
+        mut new_cap = self.cap
+        if new_cap == 0:
+            new_cap = 4
+        while new_cap < min_cap:
+            new_cap = new_cap * 2
+        let new_data = alloc(new_cap)
+        mut i = 0
+        while i < self.len:
+            new_data[i] = self.data[i]
+            i += 1
+        self.data = new_data
+        self.cap = new_cap
+
+    ## Adiciona um elemento no fim.
+    fn push(value: int):
+        if self.len >= self.cap:
+            self.reserve(self.len + 1)
+        self.data[self.len] = value
+        self.len += 1
+
+    ## Remove e retorna o último elemento. Assume len > 0.
+    fn pop() -> int:
+        self.len -= 1
+        return self.data[self.len]
+
+    ## Acessa o elemento no índice `i`. Assume 0 <= i < len.
+    fn get(i: int) -> int:
+        return self.data[i]
+
+    ## Substitui o elemento no índice `i`.
+    fn set(i: int, value: int):
+        self.data[i] = value
+
+    ## Esvazia o Vector (não libera memória).
+    fn clear():
+        self.len = 0
+
+    ## Retorna 1 se o Vector está vazio; senão 0.
+    fn is_empty() -> int:
+        if self.len == 0:
+            return 1
+        return 0
+
+    ## Retorna a soma de todos os elementos.
+    fn sum() -> int:
+        mut total = 0
+        mut i = 0
+        while i < self.len:
+            total += self.data[i]
+            i += 1
+        return total
+
+
+## Cria um novo Vector vazio (função livre).
+## Uso: mut v = new_vector(); v.push(10)
+fn new_vector() -> Vector:
+    mut v: Vector
+    v.data = none
+    v.len = 0
+    v.cap = 0
+    return v

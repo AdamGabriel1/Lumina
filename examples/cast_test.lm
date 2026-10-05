@@ -1,0 +1,24 @@
+fn main() -> int:
+    print("Testando Casting de Tipos (as)...")
+    
+    let inteiro = 10
+    let flutuante = 3.14
+    
+    # Converte Int para Float
+    let x = inteiro as float
+    print("Int -> Float:", x)
+    
+    # Converte Float para Int (Trunca para 3)
+    let y = flutuante as int
+    print("Float -> Int:", y)
+    
+    # Casting em expressões matemáticas
+    let z = (inteiro + 5) as float
+    print("Expr -> Float:", z)
+    
+    # Ponteiro para Int
+    let arr = alloc(10)
+    let ptr_val = arr as int
+    print("Ptr -> Int:", ptr_val)
+    
+    return 0

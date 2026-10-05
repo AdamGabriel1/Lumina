@@ -1,0 +1,22 @@
+# Esta função retorna o array, logo ELE FUGE. O compilador alocará no Heap (GC).
+fn criar_array_global() -> ptr:
+    mut arr = alloc(3)
+    arr[0] = 10
+    arr[1] = 20
+    arr[2] = 30
+    return arr
+
+# Esta função NÃO retorna o array, ele só vive localmente. O compilador alocará na Stack!
+fn processar_local():
+    mut arr = alloc(3)
+    arr[0] = 100
+    arr[1] = 200
+    arr[2] = 300
+    print("Array local na Stack:", arr[0], arr[1], arr[2])
+
+fn main() -> int:
+    processar_local()
+    
+    let global_arr = criar_array_global()
+    print("Array global no Heap:", global_arr[0], global_arr[1], global_arr[2])
+    return 0

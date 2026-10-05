@@ -1,0 +1,28 @@
+# Definindo um Trait
+trait Drawable:
+    fn draw()
+    fn get_area() -> int
+
+# Struct que implementará o Trait
+struct Square:
+    size: int
+
+# Implementando o Trait para Square
+impl Drawable for Square:
+    fn draw():
+        print("Desenhando Square...")
+        
+    fn get_area() -> int:
+        return 10 * 10
+
+fn main() -> int:
+    print("Testando Traits...")
+    
+    mut sq: Square
+    sq.size = 10
+    sq.draw()
+    
+    let area = sq.get_area()
+    print("Área:", area)
+    
+    return 0

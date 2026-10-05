@@ -1,0 +1,37 @@
+# Declarações das funções de Thread da biblioteca C (POSIX Threads)
+# CORREÇÃO: start_routine agora é int (receberá o endereço de memória da função)
+extern fn pthread_create(thread: str, attr: int, start_routine: int, arg: str) -> int
+extern fn pthread_join(thread: int, retval: int) -> int
+extern fn usleep(microseconds: int) -> int
+
+# A função que cada Thread vai executar.
+fn worker(arg: str) -> str:
+    let id = arg[0] - 48
+    mut i = 0
+    while i < 3:
+        print("Thread", id, "contagem:", i)
+        usleep(100000)
+        i += 1
+    return ""
+
+fn main() -> int:
+    # Aloca 1 i64 (8 bytes) para guardar o pthread_t
+    mut t1 = alloc(1)
+    mut t2 = alloc(1)
+    
+    print("Iniciando Threads...")
+    
+    # Cria a Thread 1, passando 0 (NULL) para attr, e &worker (que vira um int via ptrtoint)
+    let r1 = pthread_create(t1, 0, &worker, "1")
+    let r2 = pthread_create(t2, 0, &worker, "2")
+    
+    if r1 != 0 or r2 != 0:
+        print("Erro ao criar as threads!")
+        return 1
+        
+    # CORREÇÃO: Passa o VALOR lido de t1[0] (o ID da thread) para o join
+    pthread_join(t1[0], 0)
+    pthread_join(t2[0], 0)
+    
+    print("Threads finalizadas com sucesso!")
+    return 0

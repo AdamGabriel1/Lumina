@@ -1,0 +1,65 @@
+import "std/fs"
+
+# Tabela em memória (Array de 100 inteiros)
+mut tabela = alloc(100)
+mut total_registros = 0
+
+# Nome do arquivo de Write-Ahead Log
+let wal_file = "lumina.wal"
+
+# Adiciona um registro no Banco de Dados
+fn put(chave: int, valor: int):
+    # 1. Escreve no Log (WAL) para garantir persistência em caso de crash
+    let log_entry = "PUT " + chave + "," + valor + "\n"
+    write_file(wal_file, log_entry)
+    
+    # 2. Commita na memória
+    tabela[total_registros] = chave
+    tabela[total_registros + 1] = valor
+    total_registros += 2
+
+# Busca um registro no Banco de Dados
+fn get(chave: int) -> int:
+    mut i = 0
+    while i < total_registros:
+        if tabela[i] == chave:
+            return tabela[i + 1]
+        i += 2
+    return -1
+
+# Reconstrói o banco de dados a partir do Log (Simulação de Recovery)
+fn recover():
+    print("Iniciando recuperação do WAL...")
+    let dados = read_file(wal_file)
+    let tamanho = len(dados)
+    
+    # Se o arquivo estiver vazio, não há nada para recuperar
+    if tamanho == 0:
+        print("Banco de dados vazio. Nenhuma recuperação necessária.")
+        return
+        
+    print("Dados recuperados do log: (simulação de replay)")
+    # Em um DB real, faríamos o parse das strings "PUT chave,valor"
+    # Aqui, apenas confirmamos que o arquivo existe e tem conteúdo.
+    print("Tamanho do log:", tamanho, "bytes.")
+
+fn main() -> int:
+    print("🚀 LuminaDB iniciando...")
+    
+    # 1. Tenta recuperar dados de uma execução anterior
+    recover()
+    
+    # 2. Inserir dados
+    put(1, 100)
+    put(2, 200)
+    put(3, 300)
+    
+    # 3. Buscar
+    let res = get(2)
+    if res != -1:
+        print("✅ Chave 2 encontrada. Valor:", res)
+    else:
+        print("❌ Chave 2 não encontrada.")
+        
+    print("💾 Banco de dados em execução. Dados persistidos em lumina.wal")
+    return 0

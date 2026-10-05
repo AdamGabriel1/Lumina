@@ -1,0 +1,27 @@
+fn somar(a: int, b: int) -> int:
+    return a + b
+
+fn dividir(a: int, b: int) -> int:
+    if b == 0: return 0
+    return a / b
+
+test "deve somar 1":
+    assert(somar(2, 2) == 4)
+
+test "deve somar 2":
+    assert(somar(10, 50) == 60)
+
+test "deve dividir 1":
+    assert(dividir(10, 2) == 5)
+
+test "deve dividir 2":
+    assert(dividir(10, 0) == 0)
+
+test "loop pesado":
+    mut x = 0
+    for i in 0..1000000:
+        x += i
+    assert(x == 499999500000)
+
+fn main() -> int:
+    return 0

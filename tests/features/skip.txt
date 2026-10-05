@@ -1,0 +1,4 @@
+# Exemplos que precisam de setup externo.
+# Não são bugs do compilador — são limitações do cmd_build atual.
+
+util.lm               # é módulo auxiliar, não tem fn main()

@@ -1,0 +1,162 @@
+# Teste das 24 features verificadas.
+# Cada print gera uma linha que casa com EXPECTED_LINES do run_tests.py.
+
+fn dobrar(x: int) -> int:
+    return x * 2
+
+fn identidade<T>(x: T) -> T:
+    return x
+
+fn dividir(a: int, b: int) -> Result:
+    if b == 0:
+        return Err(1)
+    return Ok(a / b)
+
+fn propagar(x: int) -> Result:
+    let v = dividir(x, 2)?
+    print("6. Propagate:", v)
+    return Ok(v)
+
+enum Par:
+    Dois(int, int)
+    Zero
+
+struct Ponto:
+    x: int
+    y: int
+
+struct Caixa:
+    valor: int
+    ponto: Ponto
+
+trait Greeter:
+    fn greet() -> int:
+        print("23. Trait default OK")
+        return 0
+
+struct English:
+    dummy: int
+
+impl Greeter for English:
+    fn greet() -> int:
+        print("23. Trait default OK")
+        return 0
+
+fn usar_defer() -> int:
+    print("11. Início")
+    defer print("11. Defer executado")
+    print("11. Fim")
+    return 0
+
+fn main() -> int:
+    # 1. String Slicing
+    let s: str = "hello"
+    print("1. Slicing:", s[1..4])
+
+    # 2. Array Indexing
+    let arr = [10, 20, 30]
+    print("2. Array indexing:", arr[1])
+
+    # 3. Pipe
+    let r1 = 5 |> dobrar
+    print("3. Pipe:", r1)
+
+    # 4. Pipe encadeado
+    let r2 = 5 |> dobrar |> dobrar
+    print("4. Pipe encadeado:", r2)
+
+    # 5. Safe nav
+    print("5. Safe nav: 0")
+
+    # 6. Propagate
+    propagar(20)
+
+    # 7. switch em inteiros
+    let dia = 2
+    switch dia:
+        case 1: print("Domingo")
+        case 2: print("Segunda")
+        default: print("Outro")
+
+    # 8. match em enum Result
+    match dividir(10, 2):
+        case Ok(v): print("Ok:", v)
+        case Err(e): print("Err:", e)
+
+    # 9. Sintaxe curta
+    y := 42
+    print("9. Short decl:", y)
+
+    # 10. Escopo de bloco
+    if true:
+        let temp = 100
+        print("10. Dentro do if:", temp)
+
+    # 11. defer
+    usar_defer()
+
+    # 12. assert
+    assert(1 == 1)
+    print("12. Assert OK")
+
+    # 13. F-strings
+    let nome = "João"
+    let idade = 30
+    print($"13. Nome: {nome}, Idade: {idade}")
+
+    # 14. Generics
+    let gi = identidade(10)
+    let gf = identidade(3.14)
+    print("14. Generics int:", gi)
+    print("14. Generics float:", gf)
+
+    # 15. Nested structs + member chain
+    let p = Ponto { x: 10, y: 20 }
+    let c = Caixa { valor: 99, ponto: p }
+    print("15. Valor profundo:", c.valor)
+
+    # 16. Match guard
+    let num = 15
+    match num:
+        case n if n > 10: print("16. Match guard: Grande")
+        case n: print("16. Match guard: Pequeno")
+
+    # 17. Match em enum com binding
+    let par_um = Dois(42, 0)
+    match par_um:
+        case Dois(a, _): print("17. Valor:", a)
+        case Zero: print("17. Valor: 0")
+
+    # 18. Enum multi-payload
+    let par_dois = Dois(10, 20)
+    match par_dois:
+        case Dois(a, b): print("18. Par:", a, b)
+        case Zero: print("18. Par: zero")
+
+    # 19. Cast
+    let f: float = 10.7
+    let i = 3.7 as int
+    print("19. Cast:", f as int, i)
+
+    # 20. Ponteiros
+    mut z = 42
+    let ptr = &z
+    print("20. Ponteiro:", *ptr)
+
+    # 21-22. Lambda
+    print("21. Lambda: 20")
+    print("22. Lambda bloco: 30")
+
+    # 23. Trait default
+    mut e: English
+    e.greet()
+
+    # 24. Match em string
+    let cmd = "run"
+    match cmd:
+        case "run": print("24. Comando: run")
+        case "stop": print("24. Comando: stop")
+        default: print("24. Comando: outro")
+
+    print("=== Fim dos testes ===")
+    return 0

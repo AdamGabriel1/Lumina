@@ -1,0 +1,146 @@
+{
+  "scopeName": "source.lumina",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#punctuation" },
+    { "include": "#declarations" },
+    { "include": "#builtins" },
+    { "include": "#constants" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#function-calls" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.lumina",
+          "match": "#.*$"
+        },
+        {
+          "name": "comment.block.lumina",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.lumina",
+          "begin": "\\$\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.lumina",
+              "match": "\\\\."
+            },
+            {
+              "begin": "\\{",
+              "end": "\\}",
+              "patterns": [
+                { "include": "$base" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.lumina",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.lumina",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.lumina", "match": "\\b0x[0-9A-Fa-f]+\\b" },
+        { "name": "constant.numeric.float.lumina", "match": "\\b\\d+\\.\\d+\\b" },
+        { "name": "constant.numeric.integer.lumina", "match": "\\b\\d+\\b" }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.arrow.lumina", "match": "->|=>|\\.\\." },
+        { "name": "keyword.operator.pipe.lumina", "match": "\\|>" },
+        { "name": "keyword.operator.assignment.lumina", "match": "\\+=|-=|\\*=|/=|=" },
+        { "name": "keyword.operator.comparison.lumina", "match": "==|!=|<=|>=|<|>" },
+        { "name": "keyword.operator.lumina", "match": "\\?\\.|\\?" },
+        { "name": "keyword.operator.arithmetic.lumina", "match": "\\+|\\-|\\*|/|%" },
+        { "name": "keyword.operator.accessor.lumina", "match": "\\." }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.separator.lumina", "match": "[,]" },
+        { "name": "punctuation.accessor.lumina", "match": "[:]" },
+        { "name": "punctuation.section.lumina", "match": "[{}()\\[\\]]" }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn|impl)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": "keyword.declaration.lumina",
+            "2": "entity.name.function.lumina"
+          }
+        },
+        {
+          "match": "\\b(struct|enum)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": "keyword.declaration.lumina",
+            "2": "entity.name.type.lumina"
+          }
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        { "name": "storage.type.lumina", "match": "\\b(int|float|bool|str|ptr|void)\\b" },
+        { "name": "storage.modifier.lumina", "match": "\\b(let|mut|extern)\\b" },
+        {
+          "name": "support.function.builtin.lumina",
+          "match": "\\b(print|input|len|alloc|alloc_bytes|free|read_file|write_file|chr|atoi|http_response)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        { "name": "constant.language.boolean.lumina", "match": "\\b(true|false)\\b" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.lumina",
+          "match": "\\b(if|elif|else|while|for|in|return|match|case|default|and|or|not|continue|defer|test|break|assert|bench|trait|comptime|as|import)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        { "name": "entity.name.type.lumina", "match": "\\b([A-Z][A-Za-z0-9_]*)\\b" }
+      ]
+    },
+    "function-calls": {
+      "patterns": [
+        { "name": "variable.function.lumina", "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\b(?=\\s*\\()" }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        { "name": "variable.other.lumina", "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\b" }
+      ]
+    }
+  }
+}

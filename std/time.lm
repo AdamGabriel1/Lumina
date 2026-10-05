@@ -1,0 +1,5 @@
+# std/time.lm - Medição de tempo de alta precisão
+extern fn clock() -> int
+
+fn agora() -> int:
+    return clock()

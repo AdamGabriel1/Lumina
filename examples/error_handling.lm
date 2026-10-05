@@ -1,0 +1,26 @@
+enum Result:
+    Ok(int)
+    Err(int)
+
+fn dividir(a: int, b: int) -> Result:
+    if b == 0:
+        return Err(1) # Código de erro 1
+    return Ok(a / b)
+
+fn processar() -> Result:
+    # Usa o ? para desembrulhar. Se der Err, a função 'processar' para e retorna o Err!
+    let val = dividir(10, 0)?
+    print("Deu certo! Valor:", val)
+    return Ok(100)
+
+fn main() -> int:
+    let res = processar()
+    
+    # Verifica o resultado final
+    match res:
+        case Ok(v):
+            print("Processo concluído com sucesso:", v)
+        case Err(e):
+            print("Ocorreu um erro propagado:", e)
+            
+    return 0

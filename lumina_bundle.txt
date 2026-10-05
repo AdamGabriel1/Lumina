@@ -1,0 +1,2818 @@
+===== linker/link.c =====
+/* lumina-ld — linker estático minimalista para Linux x86_64
+ *
+ * Uso: lumina-ld [-e <sym>] <input.o>... -o <saida>
+ *
+ * Faz:  parse ELF .o → merge de .text/.rodata/.data/.bss →
+ *       resolução de símbolos globais → relocação → EXEC ELF.
+ *
+ * Escopo: x86_64, ET_REL → ET_EXEC, W^X estrito (2 PT_LOAD).
+ * Sem libc, sem .so, sem PLT/GOT real, sem TLS.
+ * Suporta SHN_COMMON.
+ *
+ * Compilar: clang -O2 -Wall -Wextra link.c -o lumina-ld
+ *
+ * ----------------------------------------------------------------------
+ * Histórico de decisões:
+ *
+ * v0.5.0 — versão inicial: 1 PT_LOAD RWX.
+ *
+ * v0.5.1 — W^X: 2 PT_LOAD (RX + RW), page-align entre .rodata e .data.
+ *
+ * v0.5.2 — Preferência de `main` do usuário:
+ *          símbolos `main` vindos de runtime (start.o / rt.o) são
+ *          filtrados em `build_gsyms`. Garante que o `main` do usuário
+ *          sempre vence, mesmo se o runtime emitir um `main` sintético
+ *          (bug de assembler, resíduo de build, ou edição acidental).
+ * ----------------------------------------------------------------------
+ */
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <elf.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+
+/* Constantes que podem faltar em <elf.h> antigo */
+#ifndef R_X86_64_GOTPCREL
+#define R_X86_64_GOTPCREL        9
+#endif
+#ifndef R_X86_64_GOTPCRELX
+#define R_X86_64_GOTPCRELX       41
+#endif
+#ifndef R_X86_64_REX_GOTPCRELX
+#define R_X86_64_REX_GOTPCRELX   42
+#endif
+
+#define BASE_ADDR      0x400000UL
+#define TEXT_OFF       0x1000UL
+#define HEAP_FOLGA     0x10000UL   /* 64 KB de folga após _end */
+#define N_OUT_SECS     4
+#define PAGE_SIZE      0x1000UL
+
+enum { OS_TEXT = 0, OS_RODATA, OS_DATA, OS_BSS };
+
+static void die(const char *m) { perror(m); exit(1); }
+static void err(const char *m) { fprintf(stderr, "lumina-ld: %s\n", m); exit(1); }
+
+static uint64_t align_up(uint64_t x, uint64_t a) {
+    return a <= 1 ? x : (x + a - 1) & ~(a - 1);
+}
+
+typedef struct { int out_sec; uint64_t out_off; } SecMap;
+
+typedef struct {
+    const char *path;
+    uint8_t    *data;
+    size_t      size;
+    Elf64_Ehdr *ehdr;
+    Elf64_Shdr *shdrs;
+    const char *shstrtab;
+    Elf64_Sym  *symtab;
+    size_t      nsyms;
+    const char *strtab;
+    SecMap     *map;
+} Input;
+
+typedef struct {
+    const char *name;
+    uint8_t    *data;
+    size_t      size, cap;
+    uint64_t    align;
+    uint64_t    vaddr;
+    int         nobits;
+} OutSec;
+
+typedef struct { char *name; int in_idx, sym_idx; uint8_t bind; } GSymbol;
+
+static Input   *inputs;
+static int      ninputs;
+static OutSec   outsecs[N_OUT_SECS];
+static GSymbol *gsyms;
+static int      ngsyms, cgsyms;
+static uint64_t g_file_end, g_mem_end;
+static uint64_t g_rx_end;
+static const char *entry_sym = "_start";
+
+/* ================= helpers ================= */
+
+static const char *sec_name(Input *in, int i) {
+    if (in->shdrs[i].sh_name == 0) return "";
+    return in->shstrtab + in->shdrs[i].sh_name;
+}
+
+static int find_sec(Input *in, const char *name) {
+    for (int i = 0; i < in->ehdr->e_shnum; i++)
+        if (!strcmp(sec_name(in, i), name)) return i;
+    return -1;
+}
+
+static int out_sec_for(const char *name) {
+    if (!strcmp(name, ".text")   || !strncmp(name, ".text.",   6)) return OS_TEXT;
+    if (!strcmp(name, ".rodata") || !strncmp(name, ".rodata.", 8)) return OS_RODATA;
+    if (!strcmp(name, ".data")   || !strncmp(name, ".data.",   6)) return OS_DATA;
+    if (!strcmp(name, ".bss")    || !strncmp(name, ".bss.",    5)) return OS_BSS;
+    return -1;
+}
+
+/* ------------------------------------------------------------------
+ * Detecta se um objeto é runtime (start.o / rt.o).
+ * Compara só o basename — tolera paths relativos, absolutos, symlinks.
+ * ------------------------------------------------------------------ */
+static int is_runtime_obj(const char *path) {
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    return (!strcmp(base, "start.o") || !strcmp(base, "rt.o"));
+}
+
+/* ------------------------------------------------------------------
+ * Símbolos que NUNCA são aceitos vindos de um objeto de runtime.
+ *
+ * Hoje, só `main`. Motivo: o runtime NÃO deve definir `main` — quem
+ * define é o `.lm` do usuário. Um `main` no runtime é resíduo (bug
+ * de assembler, edição acidental, build sujo).
+ *
+ * Filtrar em `build_gsyms` (em vez de resolver em `add_gsym`) torna
+ * o comportamento determinístico e independente da ordem dos inputs
+ * na linha de comando.
+ * ------------------------------------------------------------------ */
+static int is_runtime_sym(const char *name) {
+    return !strcmp(name, "main");
+}
+
+/* ================= Fase 1: load ================= */
+
+static Input load_input(const char *path) {
+    Input in; memset(&in, 0, sizeof in);
+    in.path = path;
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) die(path);
+    struct stat st;
+    if (fstat(fd, &st) < 0) die("fstat");
+    in.size = st.st_size;
+    in.data = mmap(NULL, in.size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (in.data == MAP_FAILED) die("mmap");
+    close(fd);
+
+    in.ehdr = (Elf64_Ehdr *)in.data;
+    if (memcmp(in.ehdr->e_ident, ELFMAG, SELFMAG)) err("não é ELF");
+    if (in.ehdr->e_ident[EI_CLASS] != ELFCLASS64) err("precisa 64-bit");
+    if (in.ehdr->e_ident[EI_DATA]  != ELFDATA2LSB) err("precisa little-endian");
+    if (in.ehdr->e_type    != ET_REL)     err("precisa ser .o (ET_REL)");
+    if (in.ehdr->e_machine != EM_X86_64)  err("precisa x86_64");
+
+    in.shdrs    = (Elf64_Shdr *)(in.data + in.ehdr->e_shoff);
+    in.shstrtab = (const char *)(in.data + in.shdrs[in.ehdr->e_shstrndx].sh_offset);
+
+    int si  = find_sec(&in, ".symtab");
+    int sti = find_sec(&in, ".strtab");
+    if (si < 0 || sti < 0) err("faltando .symtab/.strtab");
+    in.symtab = (Elf64_Sym *)(in.data + in.shdrs[si].sh_offset);
+    in.nsyms  = in.shdrs[si].sh_size / sizeof(Elf64_Sym);
+    in.strtab = (const char *)(in.data + in.shdrs[sti].sh_offset);
+
+    in.map = calloc(in.ehdr->e_shnum, sizeof(SecMap));
+    if (!in.map) die("calloc");
+    for (int i = 0; i < in.ehdr->e_shnum; i++) in.map[i].out_sec = -1;
+
+    return in;
+}
+
+/* ================= Fase 3: merge + layout ================= */
+
+static void outsec_reserve(OutSec *s, size_t need) {
+    if (need <= s->cap) return;
+    size_t nc = s->cap ? s->cap : 4096;
+    while (nc < need) nc *= 2;
+    s->data = realloc(s->data, nc);
+    if (!s->data) die("realloc");
+    memset(s->data + s->cap, 0, nc - s->cap);
+    s->cap = nc;
+}
+
+static void merge_sections(void) {
+    static const char *names[N_OUT_SECS] = { ".text", ".rodata", ".data", ".bss" };
+    for (int i = 0; i < N_OUT_SECS; i++) {
+        outsecs[i].name   = names[i];
+        outsecs[i].align  = 16;
+        outsecs[i].nobits = (i == OS_BSS);
+    }
+
+    for (int f = 0; f < ninputs; f++) {
+        Input *in = &inputs[f];
+        for (int i = 0; i < in->ehdr->e_shnum; i++) {
+            Elf64_Shdr *sh = &in->shdrs[i];
+            if (!(sh->sh_flags & SHF_ALLOC)) continue;
+
+            int os = out_sec_for(sec_name(in, i));
+            if (os < 0) continue;
+
+            OutSec *o = &outsecs[os];
+            uint64_t a = sh->sh_addralign ? sh->sh_addralign : 1;
+            if (a > o->align) o->align = a;
+
+            uint64_t old  = o->size;
+            uint64_t noff = align_up(old, a);
+            size_t   need = (size_t)(noff + sh->sh_size);
+            outsec_reserve(o, need);
+            if (noff > old) memset(o->data + old, 0, noff - old);
+            o->size = need;
+
+            in->map[i].out_sec = os;
+            in->map[i].out_off = noff;
+
+            if (sh->sh_type != SHT_NOBITS && sh->sh_size)
+                memcpy(o->data + noff, in->data + sh->sh_offset, sh->sh_size);
+        }
+    }
+
+    uint64_t off = TEXT_OFF, file_end = off;
+    g_rx_end = 0;
+
+    for (int i = 0; i < N_OUT_SECS; i++) {
+        OutSec *o = &outsecs[i];
+
+        if (i == OS_DATA) {
+            off = align_up(off, PAGE_SIZE);
+            g_rx_end = off;
+        }
+
+        uint64_t a = o->align > 16 ? o->align : 16;
+        off = align_up(off, a);
+        o->vaddr = BASE_ADDR + off;
+        off += o->size;
+
+        if (i != OS_BSS) file_end = off;
+    }
+
+    if (g_rx_end == 0) {
+        g_rx_end = align_up(file_end, PAGE_SIZE);
+    }
+
+    g_file_end = file_end;
+    g_mem_end  = off;
+}
+
+/* ================= Fase 2: símbolos globais ================= */
+
+static GSymbol *find_gsym(const char *name) {
+    for (int i = 0; i < ngsyms; i++)
+        if (!strcmp(gsyms[i].name, name)) return &gsyms[i];
+    return NULL;
+}
+
+static void add_gsym(const char *name, int in_idx, int sym_idx, uint8_t bind) {
+    GSymbol *g = find_gsym(name);
+    if (g) {
+        if (bind == STB_WEAK) return;
+        if (g->bind == STB_WEAK) {
+            g->in_idx = in_idx; g->sym_idx = sym_idx; g->bind = bind;
+            return;
+        }
+        fprintf(stderr, "lumina-ld: multiple definition of '%s'\n", name);
+        exit(1);
+    }
+    if (ngsyms == cgsyms) {
+        cgsyms = cgsyms ? cgsyms * 2 : 128;
+        gsyms = realloc(gsyms, cgsyms * sizeof *gsyms);
+        if (!gsyms) die("realloc");
+    }
+    gsyms[ngsyms].name    = strdup(name);
+    gsyms[ngsyms].in_idx  = in_idx;
+    gsyms[ngsyms].sym_idx = sym_idx;
+    gsyms[ngsyms].bind    = bind;
+    ngsyms++;
+}
+
+static void build_gsyms(void) {
+    for (int f = 0; f < ninputs; f++) {
+        Input *in = &inputs[f];
+        int from_runtime = is_runtime_obj(in->path);
+
+        for (size_t i = 1; i < in->nsyms; i++) {
+            Elf64_Sym *s = &in->symtab[i];
+            if (s->st_shndx == SHN_UNDEF) continue;
+            uint8_t b = ELF64_ST_BIND(s->st_info);
+            if (b != STB_GLOBAL && b != STB_WEAK) continue;
+            const char *n = in->strtab + s->st_name;
+            if (!n[0]) continue;
+
+            /* Filtro: `main` vindo de runtime é descartado. */
+            if (from_runtime && is_runtime_sym(n)) {
+                continue;
+            }
+
+            add_gsym(n, f, (int)i, b);
+        }
+    }
+}
+
+static uint64_t sym_addr(Input *in, int idx) {
+    Elf64_Sym  *s    = &in->symtab[idx];
+    const char *name = in->strtab + s->st_name;
+
+    if (s->st_shndx == SHN_UNDEF) {
+        if (!strcmp(name, "_end") || !strcmp(name, "end"))
+            return BASE_ADDR + g_mem_end;
+        if (!strcmp(name, "__bss_start"))
+            return outsecs[OS_BSS].vaddr;
+        if (!strcmp(name, "__bss_end"))
+            return outsecs[OS_BSS].vaddr + outsecs[OS_BSS].size;
+        if (!strcmp(name, "_edata"))
+            return outsecs[OS_DATA].vaddr + outsecs[OS_DATA].size;
+
+        GSymbol *g = find_gsym(name);
+        if (!g) {
+            if (ELF64_ST_BIND(s->st_info) == STB_WEAK) return 0;
+            fprintf(stderr, "lumina-ld: undefined reference to '%s'\n", name);
+            exit(1);
+        }
+        return sym_addr(&inputs[g->in_idx], g->sym_idx);
+    }
+    if (s->st_shndx == SHN_ABS) return s->st_value;
+
+    if (s->st_shndx == SHN_COMMON) {
+        OutSec *bss = &outsecs[OS_BSS];
+        uint64_t align = s->st_value ? s->st_value : 1;
+        bss->size = align_up(bss->size, align);
+        uint64_t addr = bss->vaddr + bss->size;
+        bss->size += s->st_size;
+        return addr;
+    }
+
+    if (s->st_shndx >= in->ehdr->e_shnum) {
+        fprintf(stderr, "lumina-ld: '%s' com shndx inválido\n", name);
+        exit(1);
+    }
+
+    SecMap *m = &in->map[s->st_shndx];
+    if (m->out_sec < 0) {
+        fprintf(stderr, "lumina-ld: '%s' em seção não incluída (%s)\n",
+                name, sec_name(in, s->st_shndx));
+        exit(1);
+    }
+    return outsecs[m->out_sec].vaddr + m->out_off + s->st_value;
+}
+
+/* ================= Fase 4: relocação ================= */
+
+static void apply_relocations(void) {
+    for (int f = 0; f < ninputs; f++) {
+        Input *in = &inputs[f];
+        for (int i = 0; i < in->ehdr->e_shnum; i++) {
+            Elf64_Shdr *sh = &in->shdrs[i];
+            if (sh->sh_type != SHT_RELA) continue;
+
+            int tgt = sh->sh_info;
+            if (tgt < 0 || tgt >= in->ehdr->e_shnum) continue;
+            SecMap *tm = &in->map[tgt];
+            if (tm->out_sec < 0) continue;
+
+            OutSec *o = &outsecs[tm->out_sec];
+            Elf64_Rela *rl = (Elf64_Rela *)(in->data + sh->sh_offset);
+            size_t n = sh->sh_size / sizeof(Elf64_Rela);
+
+            for (size_t j = 0; j < n; j++) {
+                uint64_t S   = sym_addr(in, ELF64_R_SYM(rl[j].r_info));
+                int64_t  A   = rl[j].r_addend;
+                uint64_t P   = o->vaddr + tm->out_off + rl[j].r_offset;
+                uint8_t *loc = o->data  + tm->out_off + rl[j].r_offset;
+                int      t   = ELF64_R_TYPE(rl[j].r_info);
+
+                switch (t) {
+                case R_X86_64_NONE: break;
+
+                case R_X86_64_64: {
+                    uint64_t v = S + (uint64_t)A;
+                    memcpy(loc, &v, 8);
+                    break;
+                }
+                case R_X86_64_PC32:
+                case R_X86_64_PLT32: {
+                    int64_t v = (int64_t)(S + (uint64_t)A - P);
+                    if (v < INT32_MIN || v > INT32_MAX) {
+                        fprintf(stderr,
+                            "lumina-ld: PC32 fora de alcance (S=%lx P=%lx)\n",
+                            (unsigned long)S, (unsigned long)P);
+                        exit(1);
+                    }
+                    int32_t v32 = (int32_t)v;
+                    memcpy(loc, &v32, 4);
+                    break;
+                }
+                case R_X86_64_32: {
+                    uint32_t v = (uint32_t)(S + (uint64_t)A);
+                    memcpy(loc, &v, 4);
+                    break;
+                }
+                case R_X86_64_32S: {
+                    int32_t v = (int32_t)(S + (uint64_t)A);
+                    memcpy(loc, &v, 4);
+                    break;
+                }
+                case R_X86_64_PC64: {
+                    int64_t v = (int64_t)(S + (uint64_t)A - P);
+                    memcpy(loc, &v, 8);
+                    break;
+                }
+                case R_X86_64_GOTPCREL:
+                case R_X86_64_GOTPCRELX:
+                case R_X86_64_REX_GOTPCRELX: {
+                    uint8_t *op = loc - 3;
+                    if ((op[0] & 0xF8) == 0x48 && op[1] == 0x8b &&
+                        (op[2] & 0xC7) == 0x05) {
+                        op[1] = 0x8d;
+                        int32_t v = (int32_t)(S + (uint64_t)A - P);
+                        memcpy(loc, &v, 4);
+                    } else {
+                        fprintf(stderr,
+                            "lumina-ld: GOTPCRELX não relaxável em 0x%lx "
+                            "(op=%02x %02x %02x)\n",
+                            (unsigned long)P, op[0], op[1], op[2]);
+                        exit(1);
+                    }
+                    break;
+                }
+                default:
+                    fprintf(stderr, "lumina-ld: reloc tipo %d não suportada\n", t);
+                    exit(1);
+                }
+            }
+        }
+    }
+}
+
+/* ================= Fase 5: escreve EXEC ELF ================= */
+
+#ifdef LEGACY_RWX
+static void write_output(const char *path, uint64_t entry) {
+    uint8_t *buf = calloc(1, g_file_end);
+    if (!buf) die("calloc");
+
+    Elf64_Ehdr *eh = (Elf64_Ehdr *)buf;
+    memcpy(eh->e_ident, ELFMAG, SELFMAG);
+    eh->e_ident[EI_CLASS]   = ELFCLASS64;
+    eh->e_ident[EI_DATA]    = ELFDATA2LSB;
+    eh->e_ident[EI_VERSION] = EV_CURRENT;
+    eh->e_ident[EI_OSABI]   = ELFOSABI_SYSV;
+    eh->e_type      = ET_EXEC;
+    eh->e_machine   = EM_X86_64;
+    eh->e_version   = EV_CURRENT;
+    eh->e_entry     = entry;
+    eh->e_phoff     = sizeof(Elf64_Ehdr);
+    eh->e_shoff     = 0;
+    eh->e_flags     = 0;
+    eh->e_ehsize    = sizeof(Elf64_Ehdr);
+    eh->e_phentsize = sizeof(Elf64_Phdr);
+    eh->e_phnum     = 1;
+    eh->e_shentsize = 0;
+    eh->e_shnum     = 0;
+    eh->e_shstrndx  = SHN_UNDEF;
+
+    uint64_t memsz = align_up(g_mem_end + HEAP_FOLGA, PAGE_SIZE);
+
+    Elf64_Phdr *ph = (Elf64_Phdr *)(buf + sizeof(Elf64_Ehdr));
+    ph->p_type   = PT_LOAD;
+    ph->p_flags  = PF_R | PF_W | PF_X;
+    ph->p_offset = 0;
+    ph->p_vaddr  = BASE_ADDR;
+    ph->p_paddr  = BASE_ADDR;
+    ph->p_filesz = g_file_end;
+    ph->p_memsz  = memsz;
+    ph->p_align  = PAGE_SIZE;
+
+    for (int i = 0; i < N_OUT_SECS; i++) {
+        if (outsecs[i].nobits || !outsecs[i].size) continue;
+        uint64_t off = outsecs[i].vaddr - BASE_ADDR;
+        memcpy(buf + off, outsecs[i].data, outsecs[i].size);
+    }
+
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    if (fd < 0) die(path);
+    if (write(fd, buf, g_file_end) != (ssize_t)g_file_end) die("write");
+    close(fd);
+    free(buf);
+
+    fprintf(stderr,
+            "[lumina-ld] %s ok (entry=0x%lx, %lu bytes, RWX legacy)\n",
+            path, (unsigned long)entry, (unsigned long)g_file_end);
+}
+#else
+static void write_output(const char *path, uint64_t entry) {
+    uint8_t *buf = calloc(1, g_file_end);
+    if (!buf) die("calloc");
+
+    Elf64_Ehdr *eh = (Elf64_Ehdr *)buf;
+    memcpy(eh->e_ident, ELFMAG, SELFMAG);
+    eh->e_ident[EI_CLASS]   = ELFCLASS64;
+    eh->e_ident[EI_DATA]    = ELFDATA2LSB;
+    eh->e_ident[EI_VERSION] = EV_CURRENT;
+    eh->e_ident[EI_OSABI]   = ELFOSABI_SYSV;
+    eh->e_type      = ET_EXEC;
+    eh->e_machine   = EM_X86_64;
+    eh->e_version   = EV_CURRENT;
+    eh->e_entry     = entry;
+    eh->e_phoff     = sizeof(Elf64_Ehdr);
+    eh->e_shoff     = 0;
+    eh->e_flags     = 0;
+    eh->e_ehsize    = sizeof(Elf64_Ehdr);
+    eh->e_phentsize = sizeof(Elf64_Phdr);
+    eh->e_phnum     = 2;
+    eh->e_shentsize = 0;
+    eh->e_shnum     = 0;
+    eh->e_shstrndx  = SHN_UNDEF;
+
+    uint64_t rx_filesz = g_rx_end;
+    uint64_t rw_offset = g_rx_end;
+    uint64_t rw_vaddr  = BASE_ADDR + rw_offset;
+    uint64_t rw_filesz = g_file_end - rw_offset;
+    uint64_t rw_memsz  = align_up(g_mem_end + HEAP_FOLGA, PAGE_SIZE) - rw_offset;
+
+    if (rw_filesz == 0 && rw_memsz == 0) {
+        rw_memsz = align_up(HEAP_FOLGA, PAGE_SIZE);
+    }
+
+    Elf64_Phdr *ph = (Elf64_Phdr *)(buf + sizeof(Elf64_Ehdr));
+
+    ph[0].p_type   = PT_LOAD;
+    ph[0].p_flags  = PF_R | PF_X;
+    ph[0].p_offset = 0;
+    ph[0].p_vaddr  = BASE_ADDR;
+    ph[0].p_paddr  = BASE_ADDR;
+    ph[0].p_filesz = rx_filesz;
+    ph[0].p_memsz  = rx_filesz;
+    ph[0].p_align  = PAGE_SIZE;
+
+    ph[1].p_type   = PT_LOAD;
+    ph[1].p_flags  = PF_R | PF_W;
+    ph[1].p_offset = rw_offset;
+    ph[1].p_vaddr  = rw_vaddr;
+    ph[1].p_paddr  = rw_vaddr;
+    ph[1].p_filesz = rw_filesz;
+    ph[1].p_memsz  = rw_memsz;
+    ph[1].p_align  = PAGE_SIZE;
+
+    if (rw_vaddr < BASE_ADDR + rx_filesz) {
+        fprintf(stderr,
+            "lumina-ld: BUG — segmentos RX/RW sobrepostos "
+            "(rx_end=0x%lx, rw_start=0x%lx)\n",
+            (unsigned long)(BASE_ADDR + rx_filesz),
+            (unsigned long)rw_vaddr);
+        exit(1);
+    }
+
+    for (int i = 0; i < N_OUT_SECS; i++) {
+        if (outsecs[i].nobits || !outsecs[i].size) continue;
+        uint64_t off = outsecs[i].vaddr - BASE_ADDR;
+        memcpy(buf + off, outsecs[i].data, outsecs[i].size);
+    }
+
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    if (fd < 0) die(path);
+    if (write(fd, buf, g_file_end) != (ssize_t)g_file_end) die("write");
+    close(fd);
+    free(buf);
+
+    fprintf(stderr,
+            "[lumina-ld] %s ok (entry=0x%lx, file=%lu B, "
+            "RX=[0x%lx..0x%lx) sz=%lu, RW=[0x%lx..0x%lx) filesz=%lu memsz=%lu)\n",
+            path, (unsigned long)entry, (unsigned long)g_file_end,
+            (unsigned long)BASE_ADDR,
+            (unsigned long)(BASE_ADDR + rx_filesz),
+            (unsigned long)rx_filesz,
+            (unsigned long)rw_vaddr,
+            (unsigned long)(rw_vaddr + rw_memsz),
+            (unsigned long)rw_filesz,
+            (unsigned long)rw_memsz);
+}
+#endif /* LEGACY_RWX */
+
+/* ================= main ================= */
+
+int main(int argc, char **argv) {
+    const char *out = NULL;
+    inputs = calloc(argc + 1, sizeof(Input));
+    if (!inputs) die("calloc");
+
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "-o")) {
+            if (++i >= argc) err("-o exige argumento");
+            out = argv[i];
+        } else if (!strcmp(argv[i], "-e") || !strcmp(argv[i], "--entry")) {
+            if (++i >= argc) err("-e exige argumento");
+            entry_sym = argv[i];
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "lumina-ld: flag desconhecida '%s'\n", argv[i]);
+            exit(1);
+        } else {
+            inputs[ninputs++] = load_input(argv[i]);
+        }
+    }
+    if (!out)     err("faltou -o <saida>");
+    if (!ninputs) err("nenhum .o de entrada");
+
+    merge_sections();
+    build_gsyms();
+
+    GSymbol *st = find_gsym(entry_sym);
+    if (!st) {
+        fprintf(stderr, "lumina-ld: símbolo de entrada '%s' não encontrado\n",
+                entry_sym);
+        exit(1);
+    }
+    uint64_t entry = sym_addr(&inputs[st->in_idx], st->sym_idx);
+
+    apply_relocations();
+    write_output(out, entry);
+    return 0;
+}===== linker/Makefile =====
+# linker/Makefile
+CC        = clang
+CFLAGS    = -O2 -Wall -Wextra
+RT_CFLAGS = -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
+            -fno-builtin -nostdlib -O2
+
+all: lumina-ld runtime/start.o runtime/rt.o
+
+lumina-ld: link.c
+	$(CC) $(CFLAGS) $< -o $@
+
+runtime/start.o: runtime/start.S
+	$(CC) -c $< -o $@
+
+runtime/rt.o: runtime/rt.c
+	$(CC) $(RT_CFLAGS) -c $< -o $@
+
+clean:
+	rm -f lumina-ld runtime/*.o
+	rm -f /tmp/hw.ll /tmp/hw.o /tmp/hw
+
+.PHONY: all clean
+===== linker/triagem.sh =====
+#!/usr/bin/env bash
+# linker/triagem.sh — roda todos os .lm de um diretório pelo pipeline
+# do linker e acumula os símbolos que faltam na runtime.
+#
+# Uso: ./linker/triagem.sh [dir]   (padrão: examples)
+#
+# Variáveis de ambiente:
+#   JOBS=N   paraleliza a triagem com N workers (default: nproc)
+#
+# A skip list fica em `linker/skip.txt`. Edite lá, não aqui.
+
+set -u
+cd "$(dirname "$0")/.."
+
+DIR="${1:-examples}"
+JOBS="${JOBS:-$(nproc 2>/dev/null || echo 1)}"
+case "$JOBS" in
+    ''|*[!0-9]*) JOBS=1 ;;
+esac
+[ "$JOBS" -lt 1 ] && JOBS=1
+
+TMP="/tmp/triagem"
+rm -rf "$TMP"
+mkdir -p "$TMP"
+
+SKIP_FILE="linker/skip.txt"
+
+declare -A SKIP_MAP
+if [ -f "$SKIP_FILE" ]; then
+    while IFS= read -r line; do
+        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+        name=$(echo "$line" | awk '{print $1}')
+        SKIP_MAP["$name"]=1
+    done < "$SKIP_FILE"
+else
+    echo "aviso: $SKIP_FILE não encontrado — rodando sem skip list" >&2
+fi
+
+PASS=()
+FAIL_COMPILE=()
+FAIL_LINK=()
+FAIL_RUN=()
+SKIP=()
+MISSING_SYMS=()
+
+# ---------- Worker ----------
+# Protocolo: "<KIND>|<base>|<detalhe>"
+run_one() {
+    local f="$1"
+    local base
+    base=$(basename "$f" .lm)
+
+    local sub="$TMP/$base"
+    mkdir -p "$sub"
+    local ll="$sub/$base.ll"
+    local o="$sub/$base.o"
+    local exe="$sub/$base"
+
+    rm -f "$ll" "$o" "$exe"
+
+    # 1) .lm → .ll
+    python3 - <<PY >"$sub/ll.out" 2>"$sub/ll.err"
+from lumina_cli.compiler.pipeline import compile_lumina
+try:
+    compile_lumina("$f", output_file="$ll", is_no_gc=True)
+except SystemExit as e:
+    raise SystemExit(e.code if e.code is not None else 1)
+PY
+
+    if [ ! -s "$ll" ]; then
+        local msg
+        msg=$(tail -1 "$sub/ll.err" 2>/dev/null || echo "?")
+        echo "FAIL-COMPILE|$base|$msg"
+        return
+    fi
+
+    # 2) .ll → .o
+    if ! clang -c -O2 -Wno-override-module -fno-pic -fno-pie \
+              -fno-stack-protector "$ll" -o "$o" 2>"$sub/o.err"; then
+        local msg
+        msg=$(tail -1 "$sub/o.err" 2>/dev/null || echo "?")
+        echo "FAIL-ASM|$base|$msg"
+        return
+    fi
+
+    # 3) link
+    if ! ./linker/lumina-ld linker/runtime/start.o "$o" linker/runtime/rt.o \
+         -o "$exe" 2>"$sub/link.err"; then
+        local syms
+        syms=$(grep -o "undefined reference to '[^']*'" "$sub/link.err" \
+               | sed "s/.*'\(.*\)'/\1/" | sort -u | tr '\n' ' ')
+        if [ -n "$syms" ]; then
+            echo "FAIL-LINK|$base|$syms"
+        else
+            local msg
+            msg=$(tail -1 "$sub/link.err" 2>/dev/null || echo "?")
+            echo "FAIL-LINK|$base|$msg"
+        fi
+        return
+    fi
+
+    # 4) run
+    timeout 5 "$exe" >"$sub/run.out" 2>&1
+    local rc=$?
+    if [ $rc -eq 124 ]; then
+        echo "FAIL-RUN|$base|timeout"
+    elif [ $rc -ne 0 ]; then
+        echo "FAIL-RUN|$base|exit=$rc"
+    else
+        echo "OK|$base|"
+    fi
+}
+
+export -f run_one
+export TMP
+
+# ---------- Filtra skips ----------
+FILES_TO_RUN=()
+for f in "$DIR"/*.lm; do
+    [ -f "$f" ] || continue
+    base=$(basename "$f" .lm)
+    if [ -n "${SKIP_MAP[$base]:-}" ]; then
+        printf "==> %-30s SKIP\n" "$base"
+        SKIP+=("$base")
+    else
+        FILES_TO_RUN+=("$f")
+    fi
+done
+
+# ---------- Executa ----------
+RAW=()
+if [ ${#FILES_TO_RUN[@]} -gt 0 ]; then
+    mapfile -t RAW < <(
+        printf '%s\0' "${FILES_TO_RUN[@]}" \
+        | xargs -0 -P "$JOBS" -I{} bash -c 'run_one "$@"' _ {}
+    )
+fi
+
+if [ ${#FILES_TO_RUN[@]} -gt 0 ] && [ ${#RAW[@]} -eq 0 ]; then
+    echo "erro: nenhum worker produziu saída" >&2
+    exit 3
+fi
+
+# ---------- Agrega ----------
+for line in "${RAW[@]}"; do
+    [ -n "$line" ] || continue
+    kind="${line%%|*}"
+    rest="${line#*|}"
+    base="${rest%%|*}"
+    detail="${rest#*|}"
+
+    case "$kind" in
+        OK)
+            printf "==> %-30s OK\n" "$base"
+            PASS+=("$base")
+            ;;
+        FAIL-COMPILE)
+            printf "==> %-30s FAIL-COMPILE (%s)\n" "$base" "$detail"
+            FAIL_COMPILE+=("$base")
+            ;;
+        FAIL-ASM)
+            printf "==> %-30s FAIL-ASM (%s)\n" "$base" "$detail"
+            FAIL_COMPILE+=("$base")
+            ;;
+        FAIL-LINK)
+            printf "==> %-30s FAIL-LINK (%s)\n" "$base" "$detail"
+            FAIL_LINK+=("$base")
+            [ -n "$detail" ] && MISSING_SYMS+=($detail)
+            ;;
+        FAIL-RUN)
+            printf "==> %-30s FAIL-RUN (%s)\n" "$base" "$detail"
+            FAIL_RUN+=("$base")
+            ;;
+        *)
+            echo "?? linha desconhecida: $line"
+            ;;
+    esac
+done
+
+echo
+echo "============================================="
+printf "PASS=%d  FAIL-COMPILE=%d  FAIL-LINK=%d  FAIL-RUN=%d  SKIP=%d  (jobs=%s)\n" \
+    "${#PASS[@]}" "${#FAIL_COMPILE[@]}" "${#FAIL_LINK[@]}" "${#FAIL_RUN[@]}" "${#SKIP[@]}" "$JOBS"
+echo "============================================="
+
+if [ ${#MISSING_SYMS[@]} -gt 0 ]; then
+    echo
+    echo "Símbolos únicos que faltam na runtime:"
+    printf '%s\n' "${MISSING_SYMS[@]}" | sort -u
+fi
+
+if [ ${#FAIL_COMPILE[@]} -gt 0 ]; then
+    echo; echo "Falhas de compilação (bug do compilador, não do linker):"
+    printf '  · %s\n' "${FAIL_COMPILE[@]}"
+fi
+if [ ${#FAIL_LINK[@]} -gt 0 ]; then
+    echo; echo "Falhas de link (símbolo faltando ou bug do linker):"
+    printf '  · %s\n' "${FAIL_LINK[@]}"
+fi
+if [ ${#FAIL_RUN[@]} -gt 0 ]; then
+    echo; echo "Falhas de execução (bug do programa, codegen ou runtime):"
+    printf '  · %s\n' "${FAIL_RUN[@]}"
+fi
+if [ ${#SKIP[@]} -gt 0 ]; then
+    echo; echo "Pulados:"
+    printf '  · %s\n' "${SKIP[@]}"
+fi===== linker/test.sh =====
+#!/usr/bin/env bash
+# linker/test.sh — pipeline manual: .lm → .ll → .o → executável
+#
+# Uso: ./linker/test.sh [arquivo.lm] [saida_sem_ext]
+#   padrão: tests/fixtures/hello_world.lm  →  /tmp/hw
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+SRC="${1:-tests/fixtures/hello_world.lm}"
+OUT="${2:-/tmp/hw}"
+
+if [ ! -f "$SRC" ]; then
+    echo "erro: arquivo não existe: $SRC" >&2
+    exit 1
+fi
+if [ ! -x "./linker/lumina-ld" ]; then
+    echo "erro: linker/lumina-ld não existe — rode 'make' em linker/ antes" >&2
+    exit 1
+fi
+
+echo "==> 1. .lm → .ll"
+python3 - <<PY
+from lumina_cli.compiler.pipeline import compile_lumina
+compile_lumina("$SRC", output_file="$OUT.ll", is_no_gc=True)
+PY
+
+echo "==> 2. .ll → .o (não-PIC)"
+clang -c -O2 -Wno-override-module \
+      -fno-pic -fno-pie -fno-stack-protector \
+      "$OUT.ll" -o "$OUT.o"
+
+echo "==> 3. link"
+./linker/lumina-ld \
+    linker/runtime/start.o \
+    "$OUT.o" \
+    linker/runtime/rt.o \
+    -o "$OUT"
+
+echo "==> 4. run"
+echo "--- saída do programa ---"
+set +e
+"$OUT"
+RC=$?
+set -e
+echo "--- fim (exit=$RC) ---"
+
+echo "==> 5. inspect"
+readelf -h "$OUT" | grep -E "Type|Entry|Machine"===== linker/skip.txt =====
+# Exemplos pulados na triagem do linker próprio.
+# Formato: <nome> [# motivo]
+#
+# Última revisão: 2026-09-25
+#   - Removidos chip8, coroutines, gc_test (agora passam).
+#   - threads: mantém skipado (pthread_create exige clone()+TLS).
+
+# --- Módulos auxiliares (sem fn main) ---
+util
+
+# --- Servidores / loops infinitos (não terminam sozinhos) ---
+api
+app
+async_server
+http_framework
+serve
+server
+proxy
+
+# --- Dependências externas (fora do escopo do linker próprio) ---
+engine                        # libraylib
+ffi_test                      # C++ (ffi_helper.o)
+wasm_js_interop               # import JS (WASM)
+
+linked_list_demo   # SIGSEGV em runtime — investigar (bug do runtime/codegen)
+
+threads===== linker/runtime/rt.c =====
+/* linker/runtime/rt.c — runtime freestanding do Lumina
+ *
+ * Compilar:
+ *   clang -c -ffreestanding -fno-pic -fno-pie \
+ *         -fno-stack-protector -fno-builtin -nostdlib \
+ *         -O2 rt.c -o rt.o
+ *
+ * IMPORTANTE: este arquivo NÃO define `main`. O `main` é sempre
+ * definido pelo `.o` do usuário (compilado do `.lm`). `_start` (em
+ * start.S) referencia `main` como UNDEF e resolve contra o objeto
+ * do usuário.
+ *
+ * ----------------------------------------------------------------------
+ * Notas de escopo:
+ *
+ * - `malloc` é thread-safe (spinlock global). `free` continua no-op.
+ *
+ * - TLS é real (variant II x86_64, via %fs).
+ *
+ * - pthreads: `pthread_create`/`pthread_join` com assinatura
+ *   compatível com a libc (POSIX). `_PThread` é um descritor interno
+ *   mapeado por `tid`; o usuário só vê o `pthread_t` opaco
+ *   (`unsigned long`).
+ * ----------------------------------------------------------------------
+ */
+typedef unsigned long size_t;
+typedef long          ssize_t;
+
+/* ================= forward declarations ================= */
+void  *malloc(size_t);
+void   free(void*);
+void  *calloc(size_t, size_t);
+void  *memset(void*, int, size_t);
+void  *memcpy(void*, const void*, size_t);
+void  *memmove(void*, const void*, size_t);
+int    memcmp(const void*, const void*, size_t);
+size_t strlen(const char*);
+int    strcmp(const char*, const char*);
+int    strncmp(const char*, const char*, size_t);
+char  *strcpy(char*, const char*);
+char  *strncpy(char*, const char*, size_t);
+char  *strcat(char*, const char*);
+char  *strstr(const char*, const char*);
+int    puts(const char*);
+long   atoi(const char*);
+int    putchar(int);
+int    getchar(void);
+int    usleep(unsigned int);
+int    remove(const char*);
+int    printf(const char*, ...);
+int    snprintf(char*, size_t, const char*, ...);
+void   abort(void);
+void  *fopen(const char*, const char*);
+int    fclose(void*);
+size_t fread(void*, size_t, size_t, void*);
+size_t fwrite(const void*, size_t, size_t, void*);
+int    fseek(void*, long, int);
+long   ftell(void*);
+char  *fgets(char*, int, void*);
+int    fputs(const char*, void*);
+int    fflush(void*);
+double pow(double, double);
+double sqrt(double);
+double floor(double);
+double ceil(double);
+double round(double);
+int    abs(int);
+long   labs(long);
+int    rand(void);
+void   srand(unsigned int);
+int    open(const char*, int, ...);
+int    close(int);
+long   read(int, void*, size_t);
+long   write(int, const void*, size_t);
+long   lseek(int, long, int);
+void   GC_init(void);
+void  *GC_malloc(size_t);
+void   GC_free(void*);
+void   makecontext(void *ucp, void (*func)(), void *stack, size_t stack_size);
+int    swapcontext(void *oucp, const void *ucp);
+
+/* TLS API */
+void         _lumina_tls_init(void);
+void        *_lumina_get_tls(void);
+void         _lumina_set_tls(void *ptr);
+void        *_lumina_tls_alloc_child(void);
+unsigned int _lumina_tls_key_create(void (*destructor)(void *));
+int          _lumina_tls_key_delete(unsigned int k);
+void        *_lumina_tls_get(unsigned int k);
+int          _lumina_tls_set(unsigned int k, void *v);
+void         _lumina_tls_run_destructors(void);
+
+/* pthreads (assinatura libc) */
+typedef unsigned long pthread_t;
+int pthread_create(pthread_t *thread, const void *attr,
+                   void *(*start_routine)(void *), void *arg);
+int pthread_join(pthread_t thread, void **retval);
+int pthread_mutex_init(void *m, const void *attr);
+int pthread_mutex_lock(void *m);
+int pthread_mutex_unlock(void *m);
+int pthread_cond_init(void *c, const void *attr);
+int pthread_cond_wait(void *c, void *m);
+int pthread_cond_signal(void *c);
+
+/* ================= syscalls Linux x86_64 ================= */
+static long _sys1(long n, long a) {
+    long r;
+    __asm__ volatile("syscall" : "=a"(r) : "a"(n), "D"(a) : "rcx", "r11", "memory");
+    return r;
+}
+static long _sys2(long n, long a, long b) {
+    long r;
+    __asm__ volatile("syscall" : "=a"(r) : "a"(n), "D"(a), "S"(b) : "rcx", "r11", "memory");
+    return r;
+}
+static long _sys3(long n, long a, long b, long c) {
+    long r;
+    __asm__ volatile("syscall" : "=a"(r) : "a"(n), "D"(a), "S"(b), "d"(c) : "rcx", "r11", "memory");
+    return r;
+}
+static long _sys4(long n, long a, long b, long c, long d) {
+    long r;
+    register long r10 __asm__("r10") = d;
+    __asm__ volatile("syscall" : "=a"(r) : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10) : "rcx", "r11", "memory");
+    return r;
+}
+static long _sys5(long n, long a, long b, long c, long d, long e) {
+    long r;
+    register long r10 __asm__("r10") = d;
+    register long r8  __asm__("r8")  = e;
+    __asm__ volatile("syscall" : "=a"(r) : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8) : "rcx", "r11", "memory");
+    return r;
+}
+static long _sys6(long n, long a, long b, long c, long d, long e, long f) {
+    long r;
+    register long r10 __asm__("r10") = d;
+    register long r8  __asm__("r8")  = e;
+    register long r9  __asm__("r9")  = f;
+    __asm__ volatile("syscall" : "=a"(r) : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9) : "rcx", "r11", "memory");
+    return r;
+}
+
+static void _write_fd(int fd, const void *buf, size_t n) { _sys3(1, fd, (long)buf, (long)n); }
+static void _exit(int code) { _sys1(60, code); __builtin_unreachable(); }
+
+/* ================= memória (brk) + spinlock ================= */
+extern char _end;
+static char *_heap = 0;
+static volatile int _malloc_lock = 0;
+
+typedef struct _GCBlock {
+    size_t size;
+    int marked;
+    struct _GCBlock *next;
+} _GCBlock;
+
+static _GCBlock *gc_head = 0;
+
+static inline void _lock(void) {
+    while (__atomic_exchange_n(&_malloc_lock, 1, __ATOMIC_ACQUIRE)) {
+        while (__atomic_load_n(&_malloc_lock, __ATOMIC_RELAXED)) {}
+    }
+}
+static inline void _unlock(void) {
+    __atomic_store_n(&_malloc_lock, 0, __ATOMIC_RELEASE);
+}
+
+void GC_init(void) { gc_head = 0; }
+
+void *malloc(size_t n) {
+    _lock();
+    if (!_heap) _heap = (char*)(((unsigned long)&_end + 4095) & ~4095UL);
+
+    size_t total = sizeof(_GCBlock) + ((n + 15) & ~15UL);
+    _GCBlock *b = (_GCBlock *)_heap;
+    _heap += total;
+    _sys1(12, (long)_heap); /* brk */
+
+    b->size = n;
+    b->marked = 0;
+    b->next = gc_head;
+    gc_head = b;
+
+    void *result = (void*)((char*)b + sizeof(_GCBlock));
+    _unlock();
+    return result;
+}
+
+/* NO-OP por design: sem bookkeeping de blocos vivos, `free` não
+ * pode devolver memória sem risco de double-free/use-after-free.
+ * Para churn controlado sob --linker=self, use std/alloc.lm (arena).
+ * Sob clang (linker padrão), free resolve para glibc. */
+void free(void *p) { (void)p; }
+
+void *calloc(size_t n, size_t sz) {
+    size_t total = n * sz;
+    void *p = malloc(total);
+    if (p) memset(p, 0, total);
+    return p;
+}
+
+void *GC_malloc(size_t n) { return malloc(n); }
+void  GC_free(void *p)    { free(p); }
+
+
+/* ================= TLS (variant II x86_64) ================= */
+#define ARCH_SET_FS        0x1002
+#define ARCH_GET_FS        0x1003
+
+#define CLONE_VM                0x00000100
+#define CLONE_FS                0x00000200
+#define CLONE_FILES             0x00000400
+#define CLONE_SIGHAND           0x00000800
+#define CLONE_SYSVSEM           0x00040000
+#define CLONE_THREAD            0x00010000
+#define CLONE_SETTLS            0x00080000
+#define CLONE_PARENT_SETTID     0x00100000
+#define CLONE_CHILD_CLEARTID    0x00200000
+
+#define FUTEX_WAIT              0
+#define FUTEX_WAKE              1
+
+#define LUMINA_TLS_STATIC_SIZE  4096
+#define LUMINA_TLS_MAX_KEYS     64
+
+typedef struct _TCB {
+    void   *self;
+    void   *dtv;
+    size_t  static_size;
+    void  (*entry)(void *);
+    void   *entry_arg;
+    int     tid;
+    int     _pad;
+} _TCB;
+
+typedef struct { int in_use; void *value; } _TLSSlot;
+typedef struct { _TLSSlot slots[LUMINA_TLS_MAX_KEYS]; } _TLSDtv;
+
+static int    _tls_key_used[LUMINA_TLS_MAX_KEYS];
+static void (*_tls_key_dtor[LUMINA_TLS_MAX_KEYS])(void *);
+
+static unsigned char _tls_master_image[LUMINA_TLS_STATIC_SIZE]
+    __attribute__((aligned(64), unused));
+
+void *__lumina_tls_block = (void *)0;
+
+static long _arch_prctl(int code, unsigned long addr) {
+    return _sys2(158, (long)code, (long)addr);
+}
+
+static inline _TCB *_tcb_current(void) {
+    unsigned long fs = 0;
+    _arch_prctl(ARCH_GET_FS, (unsigned long)&fs);
+    return (_TCB *)fs;
+}
+
+static _TCB *_tls_alloc_block(void) {
+    size_t total = LUMINA_TLS_STATIC_SIZE + sizeof(_TCB);
+    long addr = _sys6(9, 0, (long)total, 3, 0x22, -1, 0);
+    if (addr < 0) return 0;
+    unsigned char *block = (unsigned char *)addr;
+    memcpy(block, _tls_master_image, LUMINA_TLS_STATIC_SIZE);
+
+    _TCB *tcb = (_TCB *)(block + LUMINA_TLS_STATIC_SIZE);
+    tcb->self        = tcb;
+    tcb->dtv         = 0;
+    tcb->static_size = LUMINA_TLS_STATIC_SIZE;
+    tcb->entry       = 0;
+    tcb->entry_arg   = 0;
+    tcb->tid         = 0;
+    return tcb;
+}
+
+static _TLSDtv *_tls_dtv_get(_TCB *tcb) {
+    if (!tcb) return 0;
+    if (!tcb->dtv) {
+        long addr = _sys6(9, 0, (long)sizeof(_TLSDtv), 3, 0x22, -1, 0);
+        if (addr < 0) return 0;
+        tcb->dtv = (void *)addr;
+        memset(tcb->dtv, 0, sizeof(_TLSDtv));
+    }
+    return (_TLSDtv *)tcb->dtv;
+}
+
+void _lumina_tls_init(void) {
+    _TCB *cur = _tcb_current();
+    if (cur) return;
+    _TCB *tcb = _tls_alloc_block();
+    if (!tcb) return;
+    _arch_prctl(ARCH_SET_FS, (unsigned long)tcb);
+}
+
+void *_lumina_get_tls(void) { return (void *)_tcb_current(); }
+void  _lumina_set_tls(void *ptr) { _arch_prctl(ARCH_SET_FS, (unsigned long)ptr); }
+void *_lumina_tls_alloc_child(void) { return (void *)_tls_alloc_block(); }
+
+unsigned int _lumina_tls_key_create(void (*destructor)(void *)) {
+    for (int i = 0; i < LUMINA_TLS_MAX_KEYS; i++) {
+        if (!_tls_key_used[i]) {
+            _tls_key_used[i] = 1;
+            _tls_key_dtor[i] = destructor;
+            return (unsigned int)i;
+        }
+    }
+    return (unsigned int)-1;
+}
+
+int _lumina_tls_key_delete(unsigned int k) {
+    if (k >= LUMINA_TLS_MAX_KEYS) return -1;
+    _tls_key_used[k] = 0;
+    _tls_key_dtor[k] = 0;
+    return 0;
+}
+
+void *_lumina_tls_get(unsigned int k) {
+    if (k >= LUMINA_TLS_MAX_KEYS) return 0;
+    _TCB *tcb = _tcb_current();
+    if (!tcb) return 0;
+    _TLSDtv *dtv = (_TLSDtv *)tcb->dtv;
+    if (!dtv || !dtv->slots[k].in_use) return 0;
+    return dtv->slots[k].value;
+}
+
+int _lumina_tls_set(unsigned int k, void *v) {
+    if (k >= LUMINA_TLS_MAX_KEYS) return -1;
+    _TCB *tcb = _tcb_current();
+    if (!tcb) {
+        _lumina_tls_init();
+        tcb = _tcb_current();
+        if (!tcb) return -1;
+    }
+    _TLSDtv *dtv = _tls_dtv_get(tcb);
+    if (!dtv) return -1;
+    dtv->slots[k].in_use = 1;
+    dtv->slots[k].value  = v;
+    return 0;
+}
+
+void _lumina_tls_run_destructors(void) {
+    _TCB *tcb = _tcb_current();
+    if (!tcb) return;
+    _TLSDtv *dtv = (_TLSDtv *)tcb->dtv;
+    if (!dtv) return;
+    for (int round = 0; round < 4; round++) {
+        int any = 0;
+        for (unsigned int i = 0; i < LUMINA_TLS_MAX_KEYS; i++) {
+            if (dtv->slots[i].in_use && dtv->slots[i].value && _tls_key_dtor[i]) {
+                void *v = dtv->slots[i].value;
+                dtv->slots[i].value  = 0;
+                dtv->slots[i].in_use = 0;
+                _tls_key_dtor[i](v);
+                any = 1;
+            }
+        }
+        if (!any) break;
+    }
+}
+
+
+/* ================= futex ================= */
+static int _futex_wait(volatile int *addr, int expected) {
+    return (int)_sys6(202, (long)addr, FUTEX_WAIT, (long)expected, 0, 0, 0);
+}
+static int _futex_wake(volatile int *addr, int n) {
+    return (int)_sys6(202, (long)addr, FUTEX_WAKE, (long)n, 0, 0, 0);
+}
+
+
+/* ================= clone() simples (spawn-and-forget) ================= */
+int clone(int (*fn)(void*), void *stack, int flags, void *arg) {
+    if (!fn || !stack) return -1;
+
+    _TCB *child = _tls_alloc_block();
+    if (!child) return -1;
+    child->entry     = (void (*)(void *))fn;
+    child->entry_arg = arg;
+
+    unsigned long *sp = (unsigned long *)((unsigned long)stack & ~15UL);
+    sp -= 2;
+    sp[0] = (unsigned long)arg;
+    sp[1] = (unsigned long)fn;
+
+    unsigned long clone_flags = (unsigned long)flags | CLONE_SETTLS;
+
+    long r;
+    register long r10 __asm__("r10") = 0;
+    register long r8  __asm__("r8")  = (long)child;
+    __asm__ volatile(
+        "syscall\n\t"
+        "testq %%rax, %%rax\n\t"
+        "jnz 1f\n\t"
+        "popq %%rdi\n\t"
+        "popq %%rax\n\t"
+        "callq *%%rax\n\t"
+        "movq %%rax, %%rbx\n\t"
+        "callq _lumina_tls_run_destructors\n\t"
+        "movq %%rbx, %%rdi\n\t"
+        "movq $60, %%rax\n\t"
+        "syscall\n\t"
+        "1:\n\t"
+        : "=a"(r)
+        : "0"((long)56),
+          "D"(clone_flags),
+          "S"(sp),
+          "d"(0L),
+          "r"(r10),
+          "r"(r8)
+        : "rcx", "r11", "rbx", "memory"
+    );
+    return r < 0 ? -1 : (int)r;
+}
+
+
+/* ================= pthreads (libc-compatible) =================
+ *
+ * pthread_t = unsigned long (tid do kernel).
+ *
+ * `_PThread` é um descritor interno — o usuário nunca vê.
+ * O tid é mapeado em `_pthread_table[]` para o join.
+ *
+ * `pthread_create`:
+ *   1. Aloca `_PThread`.
+ *   2. Aloca stack (mmap).
+ *   3. Aloca TCB via _tls_alloc_block().
+ *   4. clone(CLONE_THREAD|CLONE_SETTLS|CLONE_CHILD_CLEARTID|...)
+ *   5. Registra tid → _PThread.
+ *
+ * `pthread_join`:
+ *   1. Lookup tid → _PThread.
+ *   2. futex_wait(&done, 1) até kernel zerar (CLONE_CHILD_CLEARTID).
+ *   3. munmap stack; remove da tabela; retorna retval.
+ */
+#define MAX_PTHREADS 256
+
+typedef struct _PThread {
+    int            tid;
+    void *        (*fn)(void *);
+    void          *arg;
+    void          *retval;
+    volatile int   done;          /* ctid: kernel zera em exit */
+    void          *stack;
+    size_t         stack_size;
+} _PThread;
+
+static _PThread *_pthread_table[MAX_PTHREADS];
+static volatile int _pthread_table_lock = 0;
+
+static void _pthread_register(int tid, _PThread *t) {
+    while (__atomic_exchange_n(&_pthread_table_lock, 1, __ATOMIC_ACQUIRE)) {}
+    for (int i = 0; i < MAX_PTHREADS; i++) {
+        if (_pthread_table[i] == 0) {
+            _pthread_table[i] = t;
+            break;
+        }
+    }
+    __atomic_store_n(&_pthread_table_lock, 0, __ATOMIC_RELEASE);
+}
+
+static _PThread *_pthread_lookup_remove(int tid) {
+    _PThread *found = 0;
+    while (__atomic_exchange_n(&_pthread_table_lock, 1, __ATOMIC_ACQUIRE)) {}
+    for (int i = 0; i < MAX_PTHREADS; i++) {
+        if (_pthread_table[i] && _pthread_table[i]->tid == tid) {
+            found = _pthread_table[i];
+            _pthread_table[i] = 0;
+            break;
+        }
+    }
+    __atomic_store_n(&_pthread_table_lock, 0, __ATOMIC_RELEASE);
+    return found;
+}
+
+static void _pthread_trampoline(void *ptr);
+
+static long _clone_pthread(void *stack, int flags, void *tls,
+                           int *ptid, int *ctid) {
+    long r;
+    register long r10 __asm__("r10") = (long)ctid;
+    register long r8  __asm__("r8")  = (long)tls;
+    __asm__ volatile(
+        "syscall\n\t"
+        "testq %%rax, %%rax\n\t"
+        "jnz 1f\n\t"
+        /* child path */
+        "popq %%rdi\n\t"            /* ptr -> _PThread */
+        "popq %%rax\n\t"            /* trampoline */
+        "callq *%%rax\n\t"
+        /* defesa: se trampoline retornar, mata a thread */
+        "xorl %%edi, %%edi\n\t"
+        "movq $60, %%rax\n\t"
+        "syscall\n\t"
+        /* parent path */
+        "1:\n\t"
+        : "=a"(r)
+        : "0"((long)56),
+          "D"((long)flags),
+          "S"((long)stack),
+          "d"((long)ptid),
+          "r"(r10),
+          "r"(r8)
+        : "rcx", "r11", "memory"
+    );
+    return r;
+}
+
+static void _pthread_trampoline(void *ptr) {
+    _PThread *t = (_PThread *)ptr;
+    void *ret = t->fn(t->arg);
+    t->retval = ret;
+    _lumina_tls_run_destructors();
+    /* Termina a thread. Em CLONE_THREAD, `exit` (60) só mata a
+     * thread atual; o kernel zera *ctid (= t->done) e acorda
+     * futexes — o que libera o pthread_join. */
+    _exit(0);
+}
+
+int pthread_create(pthread_t *thread, const void *attr,
+                   void *(*start_routine)(void *), void *arg) {
+    (void)attr;
+    if (!thread || !start_routine) return -1;
+
+    _PThread *t = (_PThread *)calloc(1, sizeof(_PThread));
+    if (!t) return -1;
+    t->fn = start_routine;
+    t->arg = arg;
+    t->done = 1;    /* kernel vai zerar em exit */
+
+    const size_t STACK_SIZE = 64 * 1024;
+    long stack_addr = _sys6(9, 0, (long)STACK_SIZE, 3, 0x22, -1, 0);
+    if (stack_addr < 0) { free(t); return -1; }
+    t->stack = (void *)stack_addr;
+    t->stack_size = STACK_SIZE;
+
+    unsigned long *sp = (unsigned long *)
+        ((unsigned long)(stack_addr + STACK_SIZE) & ~15UL);
+    sp -= 2;
+    sp[0] = (unsigned long)t;
+    sp[1] = (unsigned long)_pthread_trampoline;
+
+    _TCB *tls = _tls_alloc_block();
+    if (!tls) {
+        _sys2(11, stack_addr, (long)STACK_SIZE);
+        free(t);
+        return -1;
+    }
+
+    int flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND
+              | CLONE_SYSVSEM | CLONE_THREAD | CLONE_SETTLS
+              | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID;
+
+    int ptid_scratch = 0;
+    long tid = _clone_pthread(sp, flags, tls,
+                              &ptid_scratch, (int *)&t->done);
+    if (tid < 0) {
+        _sys2(11, stack_addr, (long)STACK_SIZE);
+        free(t);
+        return -1;
+    }
+
+    t->tid = (int)tid;
+    *thread = (pthread_t)tid;
+    _pthread_register((int)tid, t);
+    return 0;
+}
+
+int pthread_join(pthread_t thread, void **retval) {
+    _PThread *t = _pthread_lookup_remove((int)thread);
+    if (!t) return -1;
+
+    /* Espera `done` virar 0. O kernel faz isso em exit via
+     * CLONE_CHILD_CLEARTID e acorda futexes com FUTEX_WAKE. */
+    while (__atomic_load_n(&t->done, __ATOMIC_ACQUIRE) != 0) {
+        _futex_wait((volatile int *)&t->done, 1);
+    }
+
+    if (retval) *retval = t->retval;
+    _sys2(11, (long)t->stack, (long)t->stack_size);
+    free(t);
+    return 0;
+}
+
+/* --- mutex futex-based --- */
+int pthread_mutex_init(void *m, const void *attr) {
+    (void)attr;
+    if (!m) return -1;
+    *(volatile int *)m = 0;
+    return 0;
+}
+int pthread_mutex_lock(void *m) {
+    if (!m) return -1;
+    volatile int *s = (volatile int *)m;
+    if (__atomic_exchange_n(s, 1, __ATOMIC_ACQUIRE) == 0) return 0;
+    while (__atomic_exchange_n(s, 2, __ATOMIC_ACQUIRE) != 0) {
+        _futex_wait(s, 2);
+    }
+    return 0;
+}
+int pthread_mutex_unlock(void *m) {
+    if (!m) return -1;
+    volatile int *s = (volatile int *)m;
+    if (__atomic_exchange_n(s, 0, __ATOMIC_RELEASE) == 2) {
+        _futex_wake(s, 1);
+    }
+    return 0;
+}
+
+/* --- cond seq-counter futex-based --- */
+int pthread_cond_init(void *c, const void *attr) {
+    (void)attr;
+    if (!c) return -1;
+    *(volatile int *)c = 0;
+    return 0;
+}
+int pthread_cond_wait(void *c, void *m) {
+    if (!c || !m) return -1;
+    volatile int *seq = (volatile int *)c;
+    int s = __atomic_load_n(seq, __ATOMIC_ACQUIRE);
+    pthread_mutex_unlock(m);
+    _futex_wait(seq, s);
+    pthread_mutex_lock(m);
+    return 0;
+}
+int pthread_cond_signal(void *c) {
+    if (!c) return -1;
+    volatile int *seq = (volatile int *)c;
+    __atomic_add_fetch(seq, 1, __ATOMIC_RELEASE);
+    _futex_wake(seq, 1);
+    return 0;
+}
+
+
+/* ================= corrotinas ================= */
+void makecontext(void *ucp, void (*func)(), void *stack, size_t stack_size) {
+    unsigned long *sp = (unsigned long *)((unsigned char *)stack + stack_size);
+    sp = (unsigned long *)((unsigned long)sp & ~0xFFUL);
+    sp -= 1;
+
+    unsigned long *ctx = (unsigned long *)ucp;
+    ctx[6] = (unsigned long)sp;
+    ctx[7] = (unsigned long)func;
+}
+
+
+/* ================= mem* ================= */
+void *memset(void *d, int c, size_t n) {
+    unsigned char *p = (unsigned char*)d;
+    while (n--) *p++ = (unsigned char)c;
+    return d;
+}
+void *memcpy(void *d, const void *s, size_t n) {
+    unsigned char *dp = (unsigned char*)d;
+    const unsigned char *sp = (const unsigned char*)s;
+    while (n--) *dp++ = *sp++;
+    return d;
+}
+void *memmove(void *d, const void *s, size_t n) {
+    unsigned char *dp = (unsigned char*)d;
+    const unsigned char *sp = (const unsigned char*)s;
+    if (dp < sp) {
+        while (n--) *dp++ = *sp++;
+    } else {
+        dp += n; sp += n;
+        while (n--) *--dp = *--sp;
+    }
+    return d;
+}
+int memcmp(const void *a, const void *b, size_t n) {
+    const unsigned char *pa = a, *pb = b;
+    while (n--) {
+        if (*pa != *pb) return (int)*pa - (int)*pb;
+        pa++; pb++;
+    }
+    return 0;
+}
+
+/* ================= strings ================= */
+size_t strlen(const char *s) {
+    size_t n = 0;
+    while (s[n]) n++;
+    return n;
+}
+int strcmp(const char *a, const char *b) {
+    while (*a && *a == *b) { a++; b++; }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+int strncmp(const char *a, const char *b, size_t n) {
+    while (n && *a && *a == *b) { a++; b++; n--; }
+    return n ? ((unsigned char)*a - (unsigned char)*b) : 0;
+}
+char *strcpy(char *d, const char *s) {
+    char *o = d;
+    do { *d++ = *s; } while (*s++);
+    return o;
+}
+char *strncpy(char *d, const char *s, size_t n) {
+    char *o = d;
+    while (n && (*d = *s)) { d++; s++; n--; }
+    while (n--) *d++ = 0;
+    return o;
+}
+char *strcat(char *d, const char *s) {
+    char *o = d;
+    while (*d) d++;
+    do { *d++ = *s; } while (*s++);
+    return o;
+}
+int puts(const char *s) {
+    size_t n = strlen(s);
+    _write_fd(1, s, n);
+    _write_fd(1, "\n", 1);
+    return (int)(n + 1);
+}
+char *strstr(const char *h, const char *n) {
+    if (!*n) return (char*)h;
+    for (; *h; h++) {
+        const char *a = h, *b = n;
+        while (*a && *b && *a == *b) { a++; b++; }
+        if (!*b) return (char*)h;
+    }
+    return 0;
+}
+long atoi(const char *s) {
+    long v = 0;
+    int neg = 0;
+    while (*s == ' ' || *s == '\t') s++;
+    if (*s == '-') { neg = 1; s++; }
+    else if (*s == '+') s++;
+    while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0');
+    return neg ? -v : v;
+}
+
+/* ================= putchar / getchar ================= */
+int putchar(int c) {
+    unsigned char ch = (unsigned char)c;
+    _write_fd(1, &ch, 1);
+    return c;
+}
+int getchar(void) {
+    char c;
+    long r = _sys3(0, 0, (long)&c, 1);
+    return r > 0 ? (unsigned char)c : -1;
+}
+
+/* ================= usleep ================= */
+int usleep(unsigned int usec) {
+    struct { long tv_sec; long tv_nsec; } ts;
+    ts.tv_sec  = usec / 1000000UL;
+    ts.tv_nsec = (long)(usec % 1000000UL) * 1000L;
+    return (int)_sys2(35, (long)&ts, 0);
+}
+
+/* ================= remove ================= */
+int remove(const char *path) {
+    long r = _sys1(87, (long)path);
+    return r < 0 ? -1 : 0;
+}
+
+/* ================= math ================= */
+int abs(int x) { return x < 0 ? -x : x; }
+long labs(long x) { return x < 0 ? -x : x; }
+double floor(double x) { long i = (long)x; return (x < 0.0 && x != (double)i) ? (double)(i - 1) : (double)i; }
+double ceil(double x) { long i = (long)x; return (x > 0.0 && x != (double)i) ? (double)(i + 1) : (double)i; }
+double round(double x) { return (x >= 0.0) ? (double)(long)(x + 0.5) : (double)(long)(x - 0.5); }
+double sqrt(double x) {
+    if (x <= 0.0) return 0.0;
+    double r = x;
+    for (int i = 0; i < 30; i++) r = 0.5 * (r + x / r);
+    return r;
+}
+double pow(double base, double exp) {
+    if (exp == 0.0) return 1.0;
+    if (exp == 1.0) return base;
+    if (exp == 2.0) return base * base;
+    if (exp == 0.5) return sqrt(base);
+
+    int neg = 0;
+    if (exp < 0.0) { neg = 1; exp = -exp; }
+    long ie = (long)exp;
+    if ((double)ie == exp) {
+        double r = 1.0, b = base;
+        while (ie > 0) { if (ie & 1) r *= b; b *= b; ie >>= 1; }
+        return neg ? 1.0 / r : r;
+    }
+    if (base <= 0.0) return 0.0;
+    double m = base, k = 0.0;
+    while (m > 2.0) { m *= 0.5; k += 1.0; }
+    while (m < 0.5) { m *= 2.0; k -= 1.0; }
+    double z = (m - 1.0) / (m + 1.0);
+    double z2 = z * z, term = z, ln = 0.0;
+    for (int i = 0; i < 30; i++) { ln += term / (2.0 * i + 1.0); term *= z2; }
+    ln *= 2.0; ln += k * 0.69314718055994530942;
+
+    double r = 1.0, b = base;
+    long n = (long)exp;
+    while (n > 0) { if (n & 1) r *= b; b *= b; n >>= 1; }
+    double frac = exp - (double)(long)exp;
+    r *= 1.0 + frac * ln;
+    return neg ? 1.0 / r : r;
+}
+
+/* ================= rand / srand ================= */
+static unsigned long _rand_seed = 1;
+void srand(unsigned int seed) { _rand_seed = seed; }
+int rand(void) { _rand_seed = (_rand_seed * 1103515245UL + 12345UL) & 0x7fffffffUL; return (int)_rand_seed; }
+
+/* ================= I/O por fd ================= */
+int open(const char *path, int flags, ...) { return (int)_sys3(2, (long)path, flags, 0644); }
+int close(int fd) { return (int)_sys1(3, fd); }
+long read(int fd, void *buf, size_t n) { return _sys3(0, fd, (long)buf, (long)n); }
+long write(int fd, const void *buf, size_t n) { return _sys3(1, fd, (long)buf, (long)n); }
+long lseek(int fd, long off, int whence) { return _sys3(8, fd, off, whence); }
+
+/* ================= printf / snprintf ================= */
+static int _format_to(char *dst, size_t cap, const char *fmt, __builtin_va_list ap) {
+    size_t i = 0;
+    #define PUT(c) do { if (i < cap - 1) dst[i] = (c); i++; } while (0)
+
+    for (const char *p = fmt; *p; p++) {
+        if (*p != '%') { PUT(*p); continue; }
+        p++;
+        switch (*p) {
+        case 's': {
+            const char *s = __builtin_va_arg(ap, const char*);
+            if (!s) s = "(null)";
+            while (*s) PUT(*s++);
+            break;
+        }
+        case 'c': {
+            int c = __builtin_va_arg(ap, int);
+            PUT((char)c);
+            break;
+        }
+        case 'd': {
+            int v = __builtin_va_arg(ap, int);
+            char tmp[16]; int k = 0;
+            unsigned int u = (v < 0) ? (unsigned)(-v) : (unsigned)v;
+            if (v < 0) PUT('-');
+            if (!u) tmp[k++] = '0';
+            while (u) { tmp[k++] = '0' + (u % 10); u /= 10; }
+            while (k--) PUT(tmp[k]);
+            break;
+        }
+        case 'l': {
+            if (p[1] == 'd') {
+                p++;
+                long v = __builtin_va_arg(ap, long);
+                char tmp[24]; int k = 0;
+                unsigned long u = (v < 0) ? (unsigned long)(-v) : (unsigned long)v;
+                if (v < 0) PUT('-');
+                if (!u) tmp[k++] = '0';
+                while (u) { tmp[k++] = '0' + (u % 10); u /= 10; }
+                while (k--) PUT(tmp[k]);
+            } else if (p[1] == 'u') {
+                p++;
+                unsigned long u = __builtin_va_arg(ap, unsigned long);
+                char tmp[24]; int k = 0;
+                if (!u) tmp[k++] = '0';
+                while (u) { tmp[k++] = '0' + (u % 10); u /= 10; }
+                while (k--) PUT(tmp[k]);
+            } else {
+                PUT('%'); PUT('l');
+            }
+            break;
+        }
+        case 'u': {
+            unsigned int u = __builtin_va_arg(ap, unsigned int);
+            char tmp[16]; int k = 0;
+            if (!u) tmp[k++] = '0';
+            while (u) { tmp[k++] = '0' + (u % 10); u /= 10; }
+            while (k--) PUT(tmp[k]);
+            break;
+        }
+        case 'x': {
+            unsigned int u = __builtin_va_arg(ap, unsigned int);
+            char tmp[16]; int k = 0;
+            const char *hex = "0123456789abcdef";
+            if (!u) tmp[k++] = '0';
+            while (u) { tmp[k++] = hex[u & 0xF]; u >>= 4; }
+            while (k--) PUT(tmp[k]);
+            break;
+        }
+        case 'p': {
+            void *v = __builtin_va_arg(ap, void*);
+            unsigned long u = (unsigned long)v;
+            char tmp[20]; int k = 0;
+            const char *hex = "0123456789abcdef";
+            PUT('0'); PUT('x');
+            if (!u) tmp[k++] = '0';
+            while (u) { tmp[k++] = hex[u & 0xF]; u >>= 4; }
+            while (k--) PUT(tmp[k]);
+            break;
+        }
+        case 'f': {
+            double v = __builtin_va_arg(ap, double);
+            if (v < 0) { PUT('-'); v = -v; }
+            long ip = (long)v;
+            double fp = v - (double)ip;
+            char tmp[24]; int k = 0;
+            if (!ip) tmp[k++] = '0';
+            while (ip) { tmp[k++] = '0' + (ip % 10); ip /= 10; }
+            while (k--) PUT(tmp[k]);
+            PUT('.');
+            for (int d = 0; d < 6; d++) {
+                fp *= 10.0;
+                int digit = (int)fp;
+                if (digit < 0) digit = 0;
+                if (digit > 9) digit = 9;
+                PUT('0' + digit);
+                fp -= digit;
+            }
+            break;
+        }
+        case '%':
+            PUT('%');
+            break;
+        default:
+            PUT('%');
+            PUT(*p);
+            break;
+        }
+    }
+    if (cap) dst[i < cap ? i : cap - 1] = 0;
+    #undef PUT
+    return (int)i;
+}
+
+int printf(const char *fmt, ...) {
+    char buf[2048];
+    __builtin_va_list ap;
+    __builtin_va_start(ap, fmt);
+    int n = _format_to(buf, sizeof(buf), fmt, ap);
+    __builtin_va_end(ap);
+    _write_fd(1, buf, (size_t)(n < (int)sizeof(buf) ? n : (int)sizeof(buf) - 1));
+    return n;
+}
+
+int snprintf(char *dst, size_t cap, const char *fmt, ...) {
+    __builtin_va_list ap;
+    __builtin_va_start(ap, fmt);
+    int n = _format_to(dst, cap, fmt, ap);
+    __builtin_va_end(ap);
+    return n;
+}
+
+void abort(void) { _exit(134); }
+
+/* ================= FILE* mínimo ================= */
+typedef struct { int fd; int eof; int err; } _LFile;
+static _LFile _stdin_s  = { 0, 0, 0 };
+static _LFile _stdout_s = { 1, 0, 0 };
+static _LFile _stderr_s = { 2, 0, 0 };
+
+void *stdin  = &_stdin_s;
+void *stdout = &_stdout_s;
+void *stderr = &_stderr_s;
+
+void *fopen(const char *path, const char *mode) {
+    int flags;
+    int m = mode[0];
+    if (m == 'r')      flags = 0;
+    else if (m == 'w') flags = 1 | 64 | 512;
+    else if (m == 'a') flags = 1 | 64 | 1024;
+    else               return 0;
+    long fd = _sys3(2, (long)path, flags, 0644);
+    if (fd < 0) return 0;
+    _LFile *f = (_LFile *)malloc(sizeof(_LFile));
+    if (!f) { _sys1(3, fd); return 0; }
+    f->fd = (int)fd; f->eof = 0; f->err = 0;
+    return f;
+}
+
+int fclose(void *fp) {
+    _LFile *f = (_LFile *)fp;
+    if (!f) return -1;
+    if (f->fd > 2) _sys1(3, f->fd);
+    return 0;
+}
+
+size_t fread(void *buf, size_t sz, size_t n, void *fp) {
+    _LFile *f = (_LFile *)fp;
+    if (!f || !sz || !n) return 0;
+    size_t want = sz * n;
+    long got = _sys3(0, f->fd, (long)buf, want);
+    if (got <= 0) { f->eof = 1; return 0; }
+    return (size_t)got / sz;
+}
+
+size_t fwrite(const void *buf, size_t sz, size_t n, void *fp) {
+    _LFile *f = (_LFile *)fp;
+    if (!f || !sz || !n) return 0;
+    size_t total = sz * n;
+    _write_fd(f->fd, buf, total);
+    return n;
+}
+
+int fseek(void *fp, long off, int whence) {
+    _LFile *f = (_LFile *)fp;
+    if (!f) return -1;
+    long r = _sys3(8, f->fd, off, whence);
+    return r < 0 ? -1 : 0;
+}
+
+long ftell(void *fp) {
+    _LFile *f = (_LFile *)fp;
+    if (!f) return -1;
+    return _sys3(8, f->fd, 0, 1);
+}
+
+char *fgets(char *buf, int n, void *fp) {
+    _LFile *f = (_LFile *)fp;
+    if (!f || n <= 0) return 0;
+    int i = 0;
+    while (i < n - 1) {
+        char c;
+        long r = _sys3(0, f->fd, (long)&c, 1);
+        if (r <= 0) break;
+        buf[i++] = c;
+        if (c == '\n') break;
+    }
+    buf[i] = 0;
+    if (i == 0) { f->eof = 1; return 0; }
+    return buf;
+}
+
+int fputs(const char *s, void *fp) {
+    _LFile *f = (_LFile *)fp;
+    if (!f) return -1;
+    size_t n = strlen(s);
+    _write_fd(f->fd, s, n);
+    return (int)n;
+}
+
+int fflush(void *fp) { (void)fp; return 0; }
+
+/* ================= Sockets e Epoll ================= */
+int socket(int domain, int type, int protocol) { return (int)_sys3(41, domain, type, protocol); }
+int bind(int fd, const void *addr, size_t len) { return (int)_sys3(49, fd, (long)addr, len); }
+int listen(int fd, int backlog) { return (int)_sys2(50, fd, backlog); }
+int accept(int fd, void *addr, void *addrlen) { return (int)_sys3(43, fd, (long)addr, (long)addrlen); }
+int connect(int fd, const void *addr, size_t len) { return (int)_sys3(42, fd, (long)addr, len); }
+long send(int fd, const void *buf, size_t n, int flags) { return _sys4(44, fd, (long)buf, n, flags); }
+long recv(int fd, void *buf, size_t n, int flags) { return _sys4(45, fd, (long)buf, n, flags); }
+int setsockopt(int fd, int level, int optname, const void *optval, size_t optlen) { return (int)_sys5(54, fd, level, optname, (long)optval, optlen); }
+
+int epoll_create1(int flags) { return (int)_sys1(291, flags); }
+int epoll_ctl(int epfd, int op, int fd, void *event) { return (int)_sys4(233, epfd, op, fd, (long)event); }
+int epoll_wait(int epfd, void *events, int maxevents, int timeout) { return (int)_sys4(232, epfd, (long)events, maxevents, timeout); }
+
+
+/* ============================================================
+ * FIM do arquivo.
+ *
+ * NÃO adicione `main` aqui. O `main` é definido pelo `.o` do
+ * usuário (compilado do `.lm`). `_start` referencia `main` como
+ * UNDEF; o linker resolve contra o objeto do usuário.
+ * ============================================================ */===== linker/runtime/start.S =====
+/* linker/runtime/start.S — _start x86_64 Linux
+ * Compilar: clang -c runtime/start.S -o runtime/start.o
+ */
+    .text
+    .globl _start
+    .type  _start, @function
+_start:
+    xor  %rbp, %rbp            /* frame limpo para o backtrace */
+    mov  (%rsp), %rdi          /* argc */
+    lea  8(%rsp), %rsi         /* argv */
+    and  $-16, %rsp            /* alinha para a chamada (ABI) */
+    call main
+    mov  %eax, %edi            /* exit code = retorno de main */
+    mov  $60, %eax             /* SYS_exit_group */
+    syscall
+    hlt                        /* nunca chega aqui */
+    .size _start, . - _start
+
+    .section .note.GNU-stack,"",@progbits
+
+/* ================= Corrotinas ================= */
+/* swapcontext(ucp_save, ucp_activate)
+ * rdi = ponteiro para salvar o contexto atual
+ * rsi = ponteiro para carregar o novo contexto
+ */
+    .text
+    .globl swapcontext
+    .type  swapcontext, @function
+swapcontext:
+    /* Salva registros callee-saved no contexto antigo (rdi) */
+    mov    %rbx, 0x00(%rdi)
+    mov    %rbp, 0x08(%rdi)
+    mov    %r12, 0x10(%rdi)
+    mov    %r13, 0x18(%rdi)
+    mov    %r14, 0x20(%rdi)
+    mov    %r15, 0x28(%rdi)
+    mov    (%rsp), %rax      /* Pega o RIP de retorno */
+    mov    %rax, 0x38(%rdi)
+    lea    8(%rsp), %rax     /* Calcula o RSP de retorno */
+    mov    %rax, 0x30(%rdi)
+
+    /* Carrega novos registros do novo contexto (rsi) */
+    mov    0x00(%rsi), %rbx
+    mov    0x08(%rsi), %rbp
+    mov    0x10(%rsi), %r12
+    mov    0x18(%rsi), %r13
+    mov    0x20(%rsi), %r14
+    mov    0x28(%rsi), %r15
+    mov    0x30(%rsi), %rsp
+    mov    0x38(%rsi), %rax  /* Novo RIP */
+    jmp    *%rax             /* Pula para a nova rotina */
+    .size  swapcontext, . - swapcontext
+
+/* ================= getcontext ================= */
+/* getcontext(ucp)
+ * rdi = ponteiro para salvar o contexto atual
+ */
+    .text
+    .globl getcontext
+    .type  getcontext, @function
+getcontext:
+    /* Salva os registradores callee-saved */
+    mov    %rbx, 0x00(%rdi)
+    mov    %rbp, 0x08(%rdi)
+    mov    %r12, 0x10(%rdi)
+    mov    %r13, 0x18(%rdi)
+    mov    %r14, 0x20(%rdi)
+    mov    %r15, 0x28(%rdi)
+
+    /* Salva o ponteiro de pilha atual (RSP + 8 para ignorar o endereço de retorno) */
+    lea    8(%rsp), %rax
+    mov    %rax, 0x30(%rdi)
+
+    /* Salva o endereço de retorno atual (RIP) */
+    mov    (%rsp), %rax
+    mov    %rax, 0x38(%rdi)
+
+    /* Retorna 0 (sucesso) */
+    xor    %eax, %eax
+    ret
+    .size  getcontext, . - getcontext===== lumina_cli/commands/linking.py =====
+"""Configuração de `[link]` e compilação de extra_objects (.c/.cpp/.o)."""
+import os
+import re
+import subprocess
+
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
+
+from ..utils import Color, paint, warn
+from .errors import report_error
+
+
+def load_link_config(entry_file=None):
+    """Carrega config de [link] do lumina.toml apropriado.
+
+    Prioridade:
+      1. Se entry_file dado: procura <entry_file sem .lm>.toml (sidecar).
+      2. Fallback: procura ./lumina.toml.
+    """
+    config_path = None
+    if entry_file:
+        sidecar = re.sub(r'\.lm$', '.toml', entry_file)
+        if os.path.exists(sidecar):
+            config_path = sidecar
+        elif os.path.exists("lumina.toml"):
+            config_path = "lumina.toml"
+    elif os.path.exists("lumina.toml"):
+        config_path = "lumina.toml"
+
+    if not config_path or tomllib is None:
+        return {}
+
+    try:
+        with open(config_path, "rb") as f:
+            config = tomllib.load(f)
+    except Exception:
+        return {}
+
+    link = config.get("link", {})
+    return {
+        "libs": list(link.get("libs", [])),
+        "extra_objects": list(link.get("extra_objects", [])),
+        "target": link.get("target"),
+        "extra_flags": list(link.get("extra_flags", [])),
+    }
+
+
+def compile_extra_objects(extra_objects, extra_flags=None):
+    """Compila cada extra_object (.c/.cpp/.cc) para .o e retorna a lista."""
+    obj_paths = []
+    has_cpp = False
+
+    filtered_flags = []
+    for f in (extra_flags or []):
+        if f in ("--wasm", "--no-gc", "--debug", "--release"):
+            continue
+        if f.startswith("--target="):
+            filtered_flags.append("-target")
+            filtered_flags.append(f.split("=", 1)[1])
+        else:
+            filtered_flags.append(f)
+
+    for src in extra_objects:
+        if not os.path.exists(src):
+            warn(f"⚠️  extra_object não encontrado: {paint(src, Color.MUTED)}")
+            continue
+
+        is_cpp = src.endswith(('.cpp', '.cc', '.cxx', '.C'))
+        compiler = "clang++" if is_cpp else "clang"
+        obj_out = os.path.splitext(src)[0] + ".o"
+
+        cmd = [compiler, "-O2", "-c", src, "-o", obj_out] + filtered_flags
+
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            obj_paths.append(obj_out)
+            if is_cpp:
+                has_cpp = True
+        except subprocess.CalledProcessError as e:
+            err = (e.stderr or b"").decode("utf-8", errors="replace")[:200]
+            report_error(f"Falha ao compilar {src}: {err}")
+
+    return obj_paths, has_cpp
+===== lumina_cli/commands/build.py =====
+"""`lumina build`, `lumina check`, `lumina run` — compilação, checagem e execução."""
+import hashlib
+import json
+import os
+import re
+import subprocess
+
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
+
+from lumina.errors import LuminaError
+
+from ..compiler import compile_lumina, check_lumina, run_jit
+from ..utils import Color, paint, info, success, warn, step, header
+from .errors import report_error
+from .linking import load_link_config, compile_extra_objects
+
+
+# ------------------------------------------------------------------
+# Caminhos do linker próprio (lumina-ld)
+#
+# Estrutura esperada:
+#   <repo>/
+#     lumina_cli/commands/build.py   ← este arquivo
+#     linker/
+#       lumina-ld
+#       runtime/
+#         start.o
+#         rt.o
+#
+# __file__ = <repo>/lumina_cli/commands/build.py
+# dirname x3 = <repo>
+# ------------------------------------------------------------------
+def _self_linker_paths():
+    """Retorna (lumina-ld, start.o, rt.o) se os 3 existirem; senão None."""
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    linker_dir = os.path.join(repo, "linker")
+    ld    = os.path.join(linker_dir, "lumina-ld")
+    start = os.path.join(linker_dir, "runtime", "start.o")
+    rt    = os.path.join(linker_dir, "runtime", "rt.o")
+    if not (os.path.exists(ld) and os.path.exists(start) and os.path.exists(rt)):
+        return None
+    return (ld, start, rt)
+
+
+def cmd_build(entry_file=None, extra_flags=[]):
+    link_cfg = load_link_config(entry_file)
+    libs = link_cfg.get("libs", [])
+    extra_objs_src = link_cfg.get("extra_objects", [])
+    link_target = link_cfg.get("target")
+    link_extra_flags = link_cfg.get("extra_flags", [])
+
+    if entry_file:
+        entry = entry_file
+        project_name = entry_file[:-3] if entry_file.endswith(".lm") else entry_file
+    else:
+        if not os.path.exists("lumina.toml"):
+            report_error("Nenhum arquivo 'lumina.toml' encontrado no diretório atual.")
+            return None
+        if tomllib is None:
+            report_error("tomllib não disponível. Use Python 3.11+.")
+            return None
+        with open("lumina.toml", "rb") as f:
+            config = tomllib.load(f)
+        entry = config.get("package", {}).get("entry", "main.lm")
+        project_name = config.get("package", {}).get("name", "programa_final")
+
+    extra_flags = list(extra_flags)
+    if link_target == "wasm" and "--wasm" not in extra_flags:
+        extra_flags.append("--wasm")
+        info(f"🎯 Target '{link_target}' detectado em [link] — forçando --wasm")
+
+    # ---- Extrai flags que NÃO vão para o clang ----
+    target_triple  = None
+    linker_kind    = "clang"        # default; pode virar "self"
+    filtered_flags = []
+    for f in extra_flags:
+        if f.startswith("--target="):
+            target_triple = f.split("=", 1)[1]
+        elif f.startswith("--linker="):
+            linker_kind = f.split("=", 1)[1]
+        else:
+            filtered_flags.append(f)
+    extra_flags = filtered_flags
+
+    if linker_kind not in ("clang", "self"):
+        report_error(LuminaError(
+            f"--linker={linker_kind} inválido. Use --linker=self ou --linker=clang.",
+            entry, 0, 0, "",
+        ))
+        return None
+    use_self_linker = (linker_kind == "self")
+
+    is_wasm = "--wasm" in extra_flags
+    is_debug = "--debug" in extra_flags
+    is_release = "--release" in extra_flags
+    is_no_gc = ("--no-gc" in extra_flags) or is_wasm
+
+    # --linker=self usa uma runtime que implementa GC_malloc como malloc.
+    # Sem --no-gc o programa aloca e nunca libera → vaza. Forçamos
+    # --no-gc para deixar explícito.
+    if use_self_linker and not is_no_gc:
+        info("🔧 --linker=self: ativando --no-gc (runtime sem GC real).")
+        is_no_gc = True
+
+    opt_flag = "-O0" if is_debug else ("-O3" if is_release else "-O2")
+
+    step(f"🛠️  Compilando projeto: {paint(project_name, Color.BOLD + Color.BRIGHT_CYAN)}")
+    info(f"⚙️  Otimização: {paint(opt_flag, Color.BOLD)}")
+    if use_self_linker:
+        info(f"🔗 Linker: {paint('lumina-ld (self)', Color.BOLD + Color.BRIGHT_CYAN)}")
+
+    cache_use = not (is_wasm or is_debug)
+
+    llvm_ir = compile_lumina(entry, use_cache=cache_use, is_wasm=is_wasm,
+                             is_debug=is_debug, is_no_gc=is_no_gc,
+                             on_error=report_error,
+                             target_triple=target_triple)
+    if not llvm_ir:
+        return None
+
+    cli_flags = {"--wasm", "--debug", "--no-gc", "--release"}
+    linker_extra_flags = [f for f in extra_flags if f not in cli_flags]
+    linker_extra_flags.extend(link_extra_flags)
+
+    extra_obj_paths, has_cpp = compile_extra_objects(extra_objs_src, linker_extra_flags)
+
+    ir_file = f"{project_name}.ll"
+    with open(ir_file, "w") as f:
+        f.write(llvm_ir)
+
+    if is_release and not is_wasm:
+        try:
+            opt_result = subprocess.run(
+                ["opt", "-O2", "-S", ir_file, "-o", ir_file],
+                capture_output=True, text=True, timeout=30,
+            )
+            if opt_result.returncode != 0:
+                warn("⚠️  opt -O2 falhou; seguindo com IR não-otimizado.")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            warn("⚠️  'opt' não encontrado no PATH; pulando otimização extra.")
+
+    debug_flag = "-g" if is_debug else ""
+
+    # ==================================================================
+    # Branch A: WebAssembly
+    # ==================================================================
+    if is_wasm:
+        warn("⚠️ Compilando para WebAssembly: Garbage Collector nativo desativado.")
+        with open(entry, "r") as f:
+            source_code = f.read()
+        export_names = [m.group(1) for m in re.finditer(r'export\s+fn\s+(\w+)', source_code)]
+
+        clang_bin = "/opt/wasi-sdk/bin/clang" if os.path.exists("/opt/wasi-sdk/bin/clang") else "clang"
+        cmd_args = [clang_bin, "-O3", "-nostartfiles", debug_flag,
+                    "--target=wasm32-unknown-wasi",
+                    "--sysroot=/opt/wasi-sdk/share/wasi-sysroot", ir_file]
+        cmd_args.extend(extra_obj_paths)
+
+        if export_names:
+            success(f"📦 Exportando funções para JS: {', '.join(export_names)}")
+            cmd_args.append(f"-Wl,--entry={export_names[0]}")
+            for name in export_names:
+                cmd_args.append(f"-Wl,--export={name}")
+            cmd_args.extend(["-lc", "-Wl,--allow-undefined", "-o", f"{project_name}.wasm"])
+        else:
+            cmd_args.extend(["-lc", "-Wl,--export=main", "-Wl,--allow-undefined",
+                             "-o", f"{project_name}.wasm"])
+
+        for lib in libs:
+            cmd_args.append(f"-l{lib}")
+        cmd_args.extend(linker_extra_flags)
+
+        output_path = f"{project_name}.wasm"
+
+    # ==================================================================
+    # Branch B: nativo (x86_64)
+    # ==================================================================
+    else:
+        output_path = project_name
+
+        if use_self_linker:
+            # ---- B.1: lumina-ld (linker próprio) ----
+            if target_triple:
+                report_error(LuminaError(
+                    "--linker=self só suporta x86_64 nativo. "
+                    "Remova --target= ou use --linker=clang.",
+                    entry, 0, 0, "",
+                ))
+                return None
+
+            paths = _self_linker_paths()
+            if not paths:
+                report_error(LuminaError(
+                    "--linker=self requer que o linker esteja compilado. "
+                    "Rode 'make' em linker/ antes de usar esta flag.",
+                    entry, 0, 0, "",
+                ))
+                return None
+            linker_bin, start_o, rt_o = paths
+
+            # Passo 1: .ll → .o (só compila, não linka)
+            obj_file = f"{project_name}.o"
+            compile_obj_cmd = [
+                "clang", "-c", opt_flag, "-Wno-override-module",
+                "-fno-pic", "-fno-pie", "-fno-stack-protector",
+            ]
+            if debug_flag:
+                compile_obj_cmd.append(debug_flag)
+            compile_obj_cmd.extend([ir_file, "-o", obj_file])
+
+            header("4a. Codegen nativo (.ll → .o)")
+            info(f"Executando: {paint(' '.join(compile_obj_cmd), Color.MUTED)}")
+            try:
+                subprocess.run(compile_obj_cmd, check=True)
+            except subprocess.CalledProcessError:
+                report_error(LuminaError(
+                    "Erro ao gerar .o a partir do .ll.",
+                    entry, 0, 0, "",
+                ))
+                return None
+
+            # Passo 2: .o + runtime → executável
+            cmd_args = [linker_bin, start_o, obj_file, rt_o, "-o", project_name]
+            cmd_args.extend(extra_obj_paths)
+
+            if has_cpp:
+                warn("⚠️  --linker=self com objetos C++ pode falhar (sem -lstdc++).")
+            if libs:
+                warn(f"⚠️  --linker=self ignora libs externas: {libs}")
+        else:
+            # ---- B.2: clang (linker padrão) ----
+            gc_flag = "-lgc" if not is_no_gc else ""
+            if is_no_gc:
+                warn("⚠️ Modo Bare-Metal (--no-gc): Garbage Collector desativado.")
+
+            if target_triple:
+                info(f"🎯 Cross-compilando para: {paint(target_triple, Color.BOLD)}")
+                warn("⚠️ Cross-compile requer sysroot/toolchain do target no PATH "
+                     "(ex: gcc-aarch64-linux-gnu). libgc precisa estar linkável "
+                     "para o target, ou use --no-gc.")
+
+            cmd_args = ["clang"]
+            if target_triple:
+                cmd_args.append(f"--target={target_triple}")
+            cmd_args.extend([opt_flag, "-Wno-override-module", debug_flag,
+                             ir_file, "-o", project_name, "-lc", "-lm", "-lpthread"])
+            if gc_flag:
+                cmd_args.append(gc_flag)
+            cmd_args.extend(extra_obj_paths)
+            if has_cpp:
+                cmd_args.append("-lstdc++")
+            for lib in libs:
+                cmd_args.append(f"-l{lib}")
+            cmd_args.extend(linker_extra_flags)
+
+    # ------------------------------------------------------------------
+    # Cache incremental de LINKAGEM
+    #
+    # A cache só é confiável se TODAS as condições baterem:
+    #   1. O arquivo de hash existe (build anterior rodou)
+    #   2. O hash do IR + opt_flag + linker_kind bate (nada mudou)
+    #   3. O BINÁRIO DE SAÍDA existe em disco (não foi deletado/movido)
+    #
+    # Sem (3), temos o bug: cache diz "nada mudou, pulando linkagem",
+    # o comando reporta sucesso, mas o binário não existe. Sintoma típico:
+    #   $ lumina build foo.lm --release && mv foo foo_lumina
+    #   mv: cannot stat 'foo': No such file or directory
+    # ------------------------------------------------------------------
+    hash_obj_file = f".lumina_cache/{project_name}.bin_hash"
+    opt_marker = opt_flag + "|" + linker_kind
+
+    cache_hit = False
+    if (not is_wasm) and (not is_debug) and os.path.exists(hash_obj_file):
+        if os.path.exists(output_path):
+            with open(hash_obj_file, "r") as f:
+                old_hash = f.read()
+            combined = llvm_ir + "|" + opt_marker
+            new_hash = hashlib.md5(combined.encode()).hexdigest()
+            if old_hash == new_hash:
+                cache_hit = True
+
+    if cache_hit:
+        success("✅ Build incremental: Nenhum código mudou. Pulando linkagem.")
+        return output_path
+
+    header("4. Linkagem Nativa" if not use_self_linker
+           else "4b. Linkagem com lumina-ld")
+    info(f"Executando: {paint(' '.join(cmd_args), Color.MUTED)}")
+
+    try:
+        subprocess.run(cmd_args, check=True)
+        display_path = output_path if os.path.isabs(output_path) else f"./{output_path}"
+        success(f"✅ Build concluído: {paint(display_path, Color.BOLD + Color.SUCCESS)}")
+
+        os.makedirs(".lumina_cache", exist_ok=True)
+        cache_subdir = os.path.dirname(hash_obj_file)
+        if cache_subdir:
+            os.makedirs(cache_subdir, exist_ok=True)
+
+        combined = llvm_ir + "|" + opt_marker
+        with open(hash_obj_file, "w") as f:
+            f.write(hashlib.md5(combined.encode()).hexdigest())
+
+        return output_path
+    except subprocess.CalledProcessError:
+        linker_name = "lumina-ld" if use_self_linker else "clang"
+        report_error(LuminaError(
+            f"Erro durante a linkagem com {linker_name}. Veja a saída acima para detalhes.",
+            entry, 0, 0, "",
+        ))
+        return None
+
+
+def cmd_check(entry_file=None):
+    if not entry_file:
+        if os.path.exists("lumina.toml") and tomllib:
+            with open("lumina.toml", "rb") as f:
+                config = tomllib.load(f)
+                entry_file = config.get("package", {}).get("entry", "main.lm")
+        elif os.path.exists("main.lm"):
+            entry_file = "main.lm"
+        else:
+            report_error("Nenhum arquivo de entrada especificado.")
+            return False
+
+    if not os.path.exists(entry_file):
+        report_error(f"Arquivo '{entry_file}' não encontrado.")
+        return False
+
+    step(f"🔍 Verificando: {paint(entry_file, Color.BOLD + Color.BRIGHT_CYAN)}")
+    ok = check_lumina(entry_file, on_error=report_error)
+    if ok:
+        success(f"✅ {paint(entry_file, Color.BOLD)} — sem erros")
+    return ok
+
+
+def cmd_run(entry_file=None, use_jit=False, extra_flags=[], cli_args=None):
+    if not entry_file:
+        if os.path.exists("lumina.toml") and tomllib:
+            with open("lumina.toml", "rb") as f:
+                config = tomllib.load(f)
+                entry_file = config.get("package", {}).get("entry", "main.lm")
+        elif os.path.exists("lumina.json"):
+            with open("lumina.json", "r") as f:
+                config = json.load(f)
+                entry_file = config.get("entry", "main.lm")
+        elif os.path.exists("main.lm"):
+            entry_file = "main.lm"
+        else:
+            report_error("Nenhum arquivo de entrada especificado.")
+            return 1
+
+    if not os.path.exists(entry_file):
+        report_error(f"Arquivo '{entry_file}' não encontrado.")
+        return 1
+
+    step(f"🚀 Iniciando processo para: {paint(entry_file, Color.BOLD + Color.BRIGHT_CYAN)}")
+
+    if use_jit:
+        ir_file = "lumina_jit_temp.ll"
+        try:
+            llvm_ir = compile_lumina(entry_file, output_file=ir_file, on_error=report_error)
+            if not llvm_ir:
+                return 1
+            return run_jit(llvm_ir, cli_args or [])
+        finally:
+            if os.path.exists(ir_file):
+                os.remove(ir_file)
+
+    binary_name = cmd_build(entry_file, extra_flags=extra_flags)
+    if not binary_name:
+        return 1
+
+    header("Executando Binário Nativo")
+    exe_path = binary_name if os.path.isabs(binary_name) else f"./{binary_name}"
+    result = subprocess.run([exe_path])
+    return result.returncode===== scripts/check_examples.sh =====
+#!/usr/bin/env bash
+# =========================================================
+# Compila todos os exemplos em examples/*.lm.
+#
+# Uso:
+#   ./scripts/check_examples.sh                    # só compila (clang)
+#   ./scripts/check_examples.sh --run              # compila + executa
+#   ./scripts/check_examples.sh --run-only         # só executa
+#   ./scripts/check_examples.sh --linker=self      # usa lumina-ld
+#   ./scripts/check_examples.sh --run --linker=self
+#   ./scripts/check_examples.sh --run -j4          # 4 workers
+#   ./scripts/check_examples.sh --run -j 4         # idem (com espaço)
+#   ./scripts/check_examples.sh --run -j "$(nproc)"
+#   ./scripts/check_examples.sh --run --jobs=8
+# =========================================================
+
+set -u
+
+RUN_MODE=0
+RUN_ONLY=0
+LINKER_FLAG=""
+JOBS=1
+
+# ---- Parser de argumentos (aceita -j N e -jN) ----
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --run)          RUN_MODE=1 ;;
+        --run-only)     RUN_MODE=1; RUN_ONLY=1 ;;
+        --linker=self)  LINKER_FLAG="--linker=self" ;;
+        --linker=clang) LINKER_FLAG="" ;;
+        -j|--jobs)
+            if [ $# -lt 2 ]; then
+                echo "erro: $1 requer um valor (ex: -j 4)" >&2
+                exit 2
+            fi
+            JOBS="$2"
+            shift
+            ;;
+        -j*)            JOBS="${1#-j}" ;;
+        --jobs=*)       JOBS="${1#--jobs=}" ;;
+        *)
+            echo "aviso: argumento desconhecido: $1" >&2
+            ;;
+    esac
+    shift
+done
+
+# Sanitiza JOBS: se vazio ou não-numérico, cai para 1
+case "$JOBS" in
+    ''|*[!0-9]*) JOBS=1 ;;
+esac
+[ "$JOBS" -lt 1 ] && JOBS=1
+
+SKIP_FILE="tests/features/skip.txt"
+
+# Skips específicos do modo --run
+declare -A RUN_SKIP_MAP
+if [ -f "tests/features/run_skip.txt" ] && [ "$RUN_MODE" = "1" ]; then
+    while IFS= read -r line; do
+        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+        name=$(echo "$line" | awk '{print $1}')
+        RUN_SKIP_MAP["$name"]=1
+    done < "tests/features/run_skip.txt"
+fi
+
+PASS=0
+SKIP=0
+FAIL=0
+FAILED_FILES=()
+
+# Lê a skip list
+declare -A SKIP_MAP
+if [ -f "$SKIP_FILE" ]; then
+    while IFS= read -r line; do
+        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+        name=$(echo "$line" | awk '{print $1}')
+        SKIP_MAP["$name"]=1
+    done < "$SKIP_FILE"
+fi
+
+# ---------- Worker ----------
+# Protocolo: "<KIND>|<base>|<detalhe>"
+run_one_example() {
+    local f="$1"
+    local base
+    base=$(basename "$f")
+
+    if [ "$RUN_ONLY" = "0" ]; then
+        local output
+        output=$(timeout 20 python3 -u -m lumina_cli build "$f" $LINKER_FLAG 2>&1)
+        if ! echo "$output" | grep -q "Build concluído"; then
+            local detail
+            detail=$(echo "$output" | tail -3 | tr '\n' ' ')
+            echo "FAIL-COMPILE|$base|$detail"
+            return
+        fi
+    fi
+
+    if [ "$RUN_MODE" = "1" ]; then
+        local exe="examples/${base%.lm}"
+        if [ ! -x "$exe" ]; then
+            echo "FAIL-RUN|$base|(binário não encontrado: $exe)"
+            return
+        fi
+
+        local expected_file="examples/${base%.lm}.expected"
+        if [ -f "$expected_file" ]; then
+            local actual expected
+            actual=$(timeout 10 "$exe" 2>&1)
+            expected=$(cat "$expected_file")
+            if [ "$actual" = "$expected" ]; then
+                echo "PASS-RUN|$base|"
+            else
+                echo "FAIL-RUN|$base|(output mismatch)"
+            fi
+        else
+            if timeout 10 "$exe" > /dev/null 2>&1; then
+                echo "PASS-RUN|$base|"
+            else
+                local rc=$?
+                echo "FAIL-RUN|$base|(exit code: $rc)"
+            fi
+        fi
+    else
+        echo "PASS|$base|"
+    fi
+}
+
+# ---------- Cabeçalho ----------
+echo "============================================================"
+echo "  check_examples.sh"
+echo "  modo: $([ "$RUN_MODE" = "1" ] && echo "run" || echo "compile")"
+echo "  linker: ${LINKER_FLAG:-clang (default)}"
+echo "  jobs: $JOBS"
+echo "============================================================"
+echo
+
+# ---------- Filtra skips ----------
+FILES_TO_RUN=()
+for f in examples/*.lm; do
+    [ -f "$f" ] || continue
+    base=$(basename "$f")
+
+    if [ -n "${SKIP_MAP[$base]:-}" ]; then
+        echo "⏭️  SKIP: $base"
+        SKIP=$((SKIP + 1))
+        continue
+    fi
+
+    if [ "$RUN_MODE" = "1" ] && [ -n "${RUN_SKIP_MAP[$base]:-}" ]; then
+        echo "⏭️  SKIP (run): $base"
+        SKIP=$((SKIP + 1))
+        continue
+    fi
+
+    FILES_TO_RUN+=("$f")
+done
+
+# ---------- Executa ----------
+export -f run_one_example
+export RUN_MODE RUN_ONLY LINKER_FLAG
+
+RAW=()
+if [ ${#FILES_TO_RUN[@]} -gt 0 ]; then
+    mapfile -t RAW < <(
+        printf '%s\0' "${FILES_TO_RUN[@]}" \
+        | xargs -0 -P "$JOBS" -I{} bash -c 'run_one_example "$@"' _ {}
+    )
+fi
+
+# Nada rodou mas havia alvos → erro real (ex: xargs falhou)
+if [ ${#FILES_TO_RUN[@]} -gt 0 ] && [ ${#RAW[@]} -eq 0 ]; then
+    echo "erro: nenhum worker produziu saída" >&2
+    exit 3
+fi
+
+# ---------- Agrega ----------
+for line in "${RAW[@]}"; do
+    [ -n "$line" ] || continue
+    kind="${line%%|*}"
+    rest="${line#*|}"
+    name="${rest%%|*}"
+    detail="${rest#*|}"
+
+    case "$kind" in
+        PASS)
+            echo "✅ PASS: $name"
+            PASS=$((PASS + 1))
+            ;;
+        PASS-RUN)
+            echo "✅ PASS (ran): $name"
+            PASS=$((PASS + 1))
+            ;;
+        FAIL-COMPILE)
+            echo "❌ FAIL (compile): $name"
+            [ -n "$detail" ] && echo "     $detail"
+            FAIL=$((FAIL + 1))
+            FAILED_FILES+=("$name")
+            ;;
+        FAIL-RUN)
+            echo "❌ FAIL (run): $name"
+            [ -n "$detail" ] && echo "     $detail"
+            FAIL=$((FAIL + 1))
+            FAILED_FILES+=("$name")
+            ;;
+        *)
+            echo "?? linha desconhecida: $line"
+            ;;
+    esac
+done
+
+echo
+echo "============================================================"
+if [ "$RUN_MODE" = "1" ]; then
+    echo "📊 PASS: $PASS    ⏭️  SKIP: $SKIP    ❌ FAIL: $FAIL  (modo: run${LINKER_FLAG:+, linker: self}, jobs: $JOBS)"
+else
+    echo "📊 PASS: $PASS    ⏭️  SKIP: $SKIP    ❌ FAIL: $FAIL  (modo: compile${LINKER_FLAG:+, linker: self}, jobs: $JOBS)"
+fi
+echo "============================================================"
+
+if [ ${#FAILED_FILES[@]} -gt 0 ]; then
+    echo
+    echo "Falharam:"
+    for f in "${FAILED_FILES[@]}"; do
+        echo "  · $f"
+    done
+    exit 1
+fi
+exit 0===== examples/threads.lm =====
+# Declarações das funções de Thread da biblioteca C (POSIX Threads)
+# CORREÇÃO: start_routine agora é int (receberá o endereço de memória da função)
+extern fn pthread_create(thread: str, attr: int, start_routine: int, arg: str) -> int
+extern fn pthread_join(thread: int, retval: int) -> int
+extern fn usleep(microseconds: int) -> int
+
+# A função que cada Thread vai executar.
+fn worker(arg: str) -> str:
+    let id = arg[0] - 48
+    mut i = 0
+    while i < 3:
+        print("Thread", id, "contagem:", i)
+        usleep(100000)
+        i += 1
+    return ""
+
+fn main() -> int:
+    # Aloca 1 i64 (8 bytes) para guardar o pthread_t
+    mut t1 = alloc(1)
+    mut t2 = alloc(1)
+    
+    print("Iniciando Threads...")
+    
+    # Cria a Thread 1, passando 0 (NULL) para attr, e &worker (que vira um int via ptrtoint)
+    let r1 = pthread_create(t1, 0, &worker, "1")
+    let r2 = pthread_create(t2, 0, &worker, "2")
+    
+    if r1 != 0 or r2 != 0:
+        print("Erro ao criar as threads!")
+        return 1
+        
+    # CORREÇÃO: Passa o VALOR lido de t1[0] (o ID da thread) para o join
+    pthread_join(t1[0], 0)
+    pthread_join(t2[0], 0)
+    
+    print("Threads finalizadas com sucesso!")
+    return 0===== lumina.toml =====
+[package]
+name = "teste_deps"
+version = "0.1.0"
+entry = "main.lm"
+
+[dependencies]
+# Substitua por um repositório seu ou de teste que tenha arquivos .lm
+meu_pacote = "github:adamgabriel701/Lumina"

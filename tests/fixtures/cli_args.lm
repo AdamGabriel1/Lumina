@@ -1,0 +1,8 @@
+# Teste de argumentos da linha de comando e operadores lógicos
+fn main(argc: int, argv: str) -> int:
+    if argc > 1 and not false:
+        let nome = argv(1)
+        print("Bem-vindo,", nome)
+    else:
+        print("Nenhum argumento passado. Execute: python main.py tests/cli_args.lm --run SeuNome")
+    return 0

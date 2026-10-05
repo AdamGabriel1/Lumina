@@ -1,0 +1,8 @@
+[package]
+name = "teste_deps"
+version = "0.1.0"
+entry = "main.lm"
+
+[dependencies]
+# Substitua por um repositório seu ou de teste que tenha arquivos .lm
+meu_pacote = "github:adamgabriel701/Lumina"

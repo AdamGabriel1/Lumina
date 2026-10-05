@@ -1,0 +1,40 @@
+@derive(Eq, Debug)
+struct Ponto:
+    x: int
+    y: int
+
+@derive(Eq)
+struct Pessoa:
+    idade: int
+    ativo: int
+
+fn main() -> int:
+    mut p1: Ponto
+    p1.x = 10
+    p1.y = 20
+
+    mut p2: Ponto
+    p2.x = 10
+    p2.y = 20
+
+    mut p3: Ponto
+    p3.x = 10
+    p3.y = 99
+
+    print("=== Eq ===")
+    print("p1 == p2?", p1 == p2)
+    print("p1 == p3?", p1 == p3)
+
+    print("=== Debug ===")
+    print(p1.__debug__())
+
+    print("=== Pessoa Eq ===")
+    mut a: Pessoa
+    a.idade = 30
+    a.ativo = 1
+    mut b: Pessoa
+    b.idade = 30
+    b.ativo = 1
+    print("a == b?", a == b)
+
+    return 0

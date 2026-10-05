@@ -1,0 +1,15 @@
+# lumina_core/errors.lm
+#
+# Erros do compilador self-hosted. Lumina não tem exceções —
+# `error` imprime e aborta. `warn` só imprime.
+
+extern fn abort()
+
+fn error(msg: str, filename: str, line: int, col: int):
+    print("erro:", msg)
+    print("  -->", filename, ":", line, ":", col)
+    abort()
+
+fn warn(msg: str, filename: str, line: int, col: int):
+    print("aviso:", msg)
+    print("  -->", filename, ":", line, ":", col)

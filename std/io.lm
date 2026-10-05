@@ -1,0 +1,62 @@
+## std/io.lm — I/O de entrada e saída.
+##
+## Uso:
+##   import "std/io"
+##
+##   let nome = read_line()
+##   print("Olá,", nome)
+##
+## NOTA: fgets / fputs / fflush / getchar / stdin / stdout / stderr
+## são builtins do compilador (ver `lumina/builtins.py`). Não é preciso
+## declará-los como `extern fn` — o codegen já emite a chamada correta
+## ao libc com a assinatura C (ex: fgets' `size` é i32, não i64).
+
+## Lê uma linha de stdin. Remove o '\n' final, se houver.
+## Retorna "" em EOF.
+fn read_line() -> str:
+    let buf = alloc_bytes(4096)
+    let r = fgets(buf, 4096, stdin())
+    if r == nil:
+        return ""
+
+    # Loop explícito: percorre até NUL ou '\n' (ASCII 10).
+    # Se achar '\n', sobrescreve com NUL e retorna.
+    mut i = 0
+    while i < 4096:
+        let c = buf[i]
+        if c == 0:
+            break
+        if c == 10:
+            buf[i] = 0
+            return buf as str
+        i = i + 1
+    return buf as str
+
+## Lê uma linha e converte para int (via atoi).
+fn read_int() -> int:
+    let s = read_line()
+    return atoi(s)
+
+## Lê um único caractere de stdin.
+fn read_char() -> int:
+    return getchar()
+
+## Escreve `s` em stdout sem newline.
+fn write(s: str):
+    let out = stdout()
+    fputs(s, out)
+    fflush(out)
+
+## Escreve `s` em stdout seguido de newline.
+fn write_line(s: str):
+    let out = stdout()
+    fputs(s, out)
+    fputs("\n", out)
+    fflush(out)
+
+## Escreve `s` em stderr seguido de newline.
+fn eprintln(s: str):
+    let err = stderr()
+    fputs(s, err)
+    fputs("\n", err)
+    fflush(err)

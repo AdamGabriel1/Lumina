@@ -1,0 +1,21 @@
+# Soma recursiva de 1 até N (tail-call optimizada).
+#
+# O codegen detecta `return self(args)` e converte para loop:
+# reescreve os slots dos parâmetros e salta de volta para o corpo
+# da função (sem novo frame). N=1000000 roda em stack constante.
+#
+# Limitações conhecidas:
+#   - Só funciona para self-recursion direta (não mutual recursion).
+#   - `defer` NÃO roda em tail calls (a função nunca "retorna" de fato).
+fn sum_rec(n: int, acc: int) -> int:
+    if n == 0:
+        return acc
+    return sum_rec(n - 1, acc + n)
+
+fn main() -> int:
+    print("Iniciando TCO Test (N=1000000)...")
+    let res = sum_rec(1000000, 0)
+    # Soma 1..N = N * (N+1) / 2
+    # 1_000_000 * 1_000_001 / 2 = 500_000_500_000
+    print("Soma 1 até 1M:", res)
+    return 0

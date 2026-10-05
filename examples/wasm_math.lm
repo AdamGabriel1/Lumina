@@ -1,0 +1,9 @@
+# Exporta a função para o JavaScript conseguir acessá-la
+export fn fib(n: int) -> int:
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+# O main roda quando o módulo WASM é carregado
+fn main() -> int:
+    return 0

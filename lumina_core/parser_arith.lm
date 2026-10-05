@@ -1,0 +1,101 @@
+# lumina_core/parser_arith.lm
+# Calculadora recursiva (demo de ADTs). NÃO é o parser Lumina.
+# Para o parser self-hosted real, ver Sprint 12.
+
+enum ASTNode:
+    NumExpr(int)
+    BinExpr(str, int, int) # op, left, right
+    Empty
+
+mut pos = 0
+mut code_len = 0
+mut source = ""
+
+fn peek() -> int:
+    if pos < code_len:
+        return source[pos]
+    return 0
+
+fn consume() -> int:
+    let c = peek()
+    pos += 1
+    return c
+
+fn skip_whitespace():
+    while peek() == 32:
+        consume()
+
+fn parse_number() -> int:
+    skip_whitespace()
+    mut num = 0
+    while peek() >= 48 and peek() <= 57:
+        num = num * 10 + (consume() - 48)
+    return num
+
+fn parse_factor() -> int:
+    skip_whitespace()
+    if peek() == 40:  # '('
+        consume()
+        let val = parse_expr()
+        if peek() == 41:  # ')'
+            consume()
+        return val
+    return parse_number()
+
+fn parse_term() -> int:
+    mut left = parse_factor()
+    skip_whitespace()
+    
+    while peek() == 42 or peek() == 47:  # '*' ou '/'
+        let op = consume()
+        let right = parse_factor()
+        
+        # Constrói um nó da AST (armazenado como int na memória por enquanto)
+        let node = BinExpr(chr(op), left, right)
+        
+        if op == 42:
+            left = left * right
+        else:
+            left = left / right
+        skip_whitespace()
+        
+    return left
+
+fn parse_expr() -> int:
+    mut left = parse_term()
+    skip_whitespace()
+    
+    while peek() == 43 or peek() == 45:  # '+' ou '-'
+        let op = consume()
+        let right = parse_term()
+        
+        let node = BinExpr(chr(op), left, right)
+        
+        if op == 43:
+            left = left + right
+        else:
+            left = left - right
+        skip_whitespace()
+        
+    return left
+
+fn evaluate(code_str: str) -> int:
+    source = code_str
+    code_len = len(code_str)
+    pos = 0
+    return parse_expr()
+
+fn main() -> int:
+    print("--- Lumina Native Parser with ADTs ---")
+    
+    let expr1 = "10 + 2 * 3"
+    let res1 = evaluate(expr1)
+    print("Expressão:", expr1)
+    print("Resultado:", res1) # 16
+    
+    let expr2 = "(10 + 2) * 3"
+    let res2 = evaluate(expr2)
+    print("Expressão:", expr2)
+    print("Resultado:", res2) # 36
+    
+    return 0

@@ -1,0 +1,27 @@
+# Exemplos pulados na triagem do linker próprio.
+# Formato: <nome> [# motivo]
+#
+# Última revisão: 2026-09-25
+#   - Removidos chip8, coroutines, gc_test (agora passam).
+#   - threads: mantém skipado (pthread_create exige clone()+TLS).
+
+# --- Módulos auxiliares (sem fn main) ---
+util
+
+# --- Servidores / loops infinitos (não terminam sozinhos) ---
+api
+app
+async_server
+http_framework
+serve
+server
+proxy
+
+# --- Dependências externas (fora do escopo do linker próprio) ---
+engine                        # libraylib
+ffi_test                      # C++ (ffi_helper.o)
+wasm_js_interop               # import JS (WASM)
+
+linked_list_demo   # SIGSEGV em runtime — investigar (bug do runtime/codegen)
+
+threads

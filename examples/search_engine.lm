@@ -1,0 +1,89 @@
+# Motor de Busca - Índice Invertido
+
+# Define a estrutura de um Posting (Ocorrência de uma palavra)
+struct Posting:
+    word_hash: int
+    doc_id: int
+
+# Banco de dados do índice (Array de até 1000 ocorrências)
+mut index_table = alloc(1000)
+mut index_size = 0
+
+# Documentos de exemplo (strings fixas)
+let doc1 = "lumina is a fast programming language"
+let doc2 = "the language is compiled to native code"
+let doc3 = "fast code is good code"
+
+# Função de Hash simples (converte string em número para comparar mais rápido)
+fn hash_word(word: str) -> int:
+    mut h = 0
+    let len = len(word)
+    mut i = 0
+    while i < len:
+        h = h * 31 + word[i]
+        i += 1
+    return h
+
+# Adiciona uma palavra ao índice
+fn index_word(word: str, doc_id: int):
+    let h = hash_word(word)
+    index_table[index_size] = h
+    index_table[index_size + 1] = doc_id
+    index_size += 2
+
+# Busca uma palavra no índice e imprime os documentos onde aparece
+fn search(word: str):
+    let h = hash_word(word)
+    print("Buscando por '" + word + "'...")
+    
+    mut found = 0
+    mut i = 0
+    while i < index_size:
+        if index_table[i] == h:
+            let doc_id = index_table[i + 1]
+            print("  -> Encontrada no Documento:", doc_id)
+            found += 1
+        i += 2
+        
+    if found == 0:
+        print("  -> Nenhum resultado encontrado.")
+
+# Tokeniza e indexa um documento inteiro
+fn index_document(text: str, doc_id: int):
+    mut current_word = ""
+    let length = len(text)
+    mut i = 0
+    
+    while i < length:
+        let c = text[i]
+        # Se for espaço (ASCII 32), fim de uma palavra
+        if c == 32:
+            if len(current_word) > 0:
+                index_word(current_word, doc_id)
+                current_word = ""
+        else:
+            current_word = current_word + chr(c)
+        i += 1
+        
+    # Indexa a última palavra da string
+    if len(current_word) > 0:
+        index_word(current_word, doc_id)
+
+fn main() -> int:
+    print("🏗️  Construindo Índice Invertido...")
+    
+    # 1. Indexa os 3 documentos
+    index_document(doc1, 1)
+    index_document(doc2, 2)
+    index_document(doc3, 3)
+    
+    print("Indexação concluída! Total de postings:", index_size / 2)
+    print("-----------------------------------------")
+    
+    # 2. Faz buscas
+    search("language")
+    search("fast")
+    search("code")
+    search("rust")
+    
+    return 0

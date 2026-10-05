@@ -1,0 +1,42 @@
+import "std/http"
+import "std/epoll"
+
+fn main() -> int:
+    let porta = 8080
+    let server_fd = iniciar(porta)
+    
+    if server_fd < 0:
+        print("Erro ao iniciar servidor")
+        return 1
+        
+    print("🚀 Servidor Async (epoll) rodando na porta", porta)
+    
+    # 1. Cria o epoll no Kernel
+    let epfd = criar()
+    if epfd < 0:
+        return 1
+        
+    # 2. Adiciona o socket do servidor ao epoll para monitorar novas conexões
+    adicionar(epfd, server_fd)
+    
+    mut client_addr = alloc_bytes(16)
+    mut client_len_ptr = alloc_bytes(4)
+    client_len_ptr[0] = 16
+    
+    # 3. O Event Loop principal!
+    while true:
+        # Espera o Kernel avisar que algo aconteceu (non-blocking I/O)
+        let events_ptr = esperar(epfd, 10)
+        
+        if events_ptr != 0:
+            # O Kernel acordou a CPU! Alguém conectou ou enviou dados.
+            # Em um servidor completo, leríamos o 'events_ptr' para saber qual socket está pronto.
+            # Para esta prova de conceito, vamos apenas aceitar e responder.
+            let client_fd = accept(server_fd, client_addr, client_len_ptr)
+            if client_fd >= 0:
+                recv(client_fd, alloc_bytes(1024), 1024, 0)
+                let resp = "HTTP/1.1 200 OK\r\nContent-Length: 18\r\n\r\n<h1>Async Epoll OK!</h1>"
+                send(client_fd, resp, len(resp), 0)
+                close(client_fd)
+                
+    return 0

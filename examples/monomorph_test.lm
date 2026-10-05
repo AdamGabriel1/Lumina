@@ -1,0 +1,24 @@
+# Struct Genérica
+struct Box<T>:
+    value: T
+
+fn main() -> int:
+    print("Iniciando Monomorphization...")
+    
+    # Declarando uma Box de Inteiro
+    mut b1: Box<int>
+    b1.value = 42
+    
+    # Declarando uma Box de Float
+    mut b2: Box<float>
+    b2.value = 3.14
+    
+    # Declarando uma Box de String
+    mut b3: Box<str>
+    b3.value = "Ola"
+    
+    print("Box<int>:", b1.value)
+    print("Box<float>:", b2.value)
+    print("Box<str>:", b3.value)
+    
+    return 0

@@ -1,0 +1,28 @@
+# std/async_fs.lm - I/O de Arquivos Não-Bloqueante (O_NONBLOCK)
+
+let O_RDONLY = 0
+let O_NONBLOCK = 2048
+
+extern fn open(pathname: str, flags: int) -> int
+extern fn read(fd: int, buf: ptr, count: int) -> int
+extern fn close(fd: int) -> int
+
+fn read_file_async(path: str) -> str:
+    let fd = open(path, O_RDONLY | O_NONBLOCK)
+    if fd < 0:
+        return "ERRO"
+        
+    let buf = alloc_bytes(4096)
+    
+    # Lê o arquivo de uma vez
+    let bytes_read = read(fd, buf, 4096)
+    
+    # Se leu algo, garante que a string termina com \0 e converte para str
+    if bytes_read > 0:
+        # Adiciona o null terminator no final
+        buf[bytes_read] = 0
+        close(fd)
+        return buf as str
+        
+    close(fd)
+    return ""

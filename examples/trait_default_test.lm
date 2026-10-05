@@ -1,0 +1,19 @@
+trait Greeter:
+    fn name() -> str
+    # Método padrão: chama a função 'name' da struct
+    fn greet():
+        let n = name()
+        print("Hello from", n)
+
+struct English:
+    dummy: int
+
+impl Greeter for English:
+    fn name() -> str:
+        return "Lumina"
+
+fn main() -> int:
+    mut e: English
+    e.dummy = 0
+    e.greet()
+    return 0

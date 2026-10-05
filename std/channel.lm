@@ -1,0 +1,80 @@
+# std/channel.lm - Canais de Concorrência estilo Go (CSP)
+
+struct Mutex:
+    data1: int
+    data2: int
+    data3: int
+    data4: int
+    data5: int
+
+struct Cond:
+    data1: int
+    data2: int
+    data3: int
+    data4: int
+    data5: int
+    data6: int
+
+extern fn pthread_mutex_init(mutex: ptr, attr: int) -> int
+extern fn pthread_mutex_lock(mutex: ptr) -> int
+extern fn pthread_mutex_unlock(mutex: ptr) -> int
+extern fn pthread_cond_init(cond: ptr, attr: int) -> int
+extern fn pthread_cond_wait(cond: ptr, mutex: ptr) -> int
+extern fn pthread_cond_signal(cond: ptr) -> int
+
+struct Channel:
+    buffer: ptr
+    capacity: int
+    size: int
+    head: int
+    tail: int
+    mutex: Mutex
+    cond: Cond
+
+# NOVO: Retorna um PONTEIRO para o Canal na Heap
+fn new(cap: int) -> ptr:
+    mut c = alloc_bytes(100) as ptr
+    c[0] = alloc(cap) as int # buffer
+    c[1] = cap               # capacity
+    c[2] = 0                 # size
+    c[3] = 0                 # head
+    c[4] = 0                 # tail
+    # mutex e cond começam logo após, nos índices 5 a 15
+    pthread_mutex_init(c + 5, 0)
+    pthread_cond_init(c + 10, 0)
+    return c
+
+fn send(c: ptr, val: int):
+    pthread_mutex_lock(c + 5)
+    
+    # Espera até ter espaço no buffer
+    while c[2] == c[1]:
+        pthread_cond_wait(c + 10, c + 5)
+        
+    let tail = c[4]
+    let buf = c[0] as ptr
+    buf[tail] = val
+    
+    c[4] = (tail + 1) % c[1]
+    c[2] = c[2] + 1
+    
+    pthread_cond_signal(c + 10)
+    pthread_mutex_unlock(c + 5)
+
+fn recv(c: ptr) -> int:
+    pthread_mutex_lock(c + 5)
+    
+    # Espera até ter dados no buffer
+    while c[2] == 0:
+        pthread_cond_wait(c + 10, c + 5)
+        
+    let head = c[3]
+    let buf = c[0] as ptr
+    let val = buf[head]
+    
+    c[3] = (head + 1) % c[1]
+    c[2] = c[2] - 1
+    
+    pthread_cond_signal(c + 10)
+    pthread_mutex_unlock(c + 5)
+    return val

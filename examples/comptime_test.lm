@@ -1,0 +1,9 @@
+fn main() -> int:
+    print("Testando Metaprogramação (Comptime)...")
+    
+    # O compilador vai calcular 25 * 4 durante a compilação!
+    # No binário final, isso será apenas o número 100. Zero custo em runtime.
+    let resultado = comptime(25 * 4)
+    
+    print("Resultado calculado em tempo de compilação:", resultado)
+    return 0

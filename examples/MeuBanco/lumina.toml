@@ -1,0 +1,6 @@
+[package]
+name = "MeuBanco"
+version = "0.1.0"
+entry = "main.lm"
+
+[dependencies]

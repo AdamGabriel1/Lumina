@@ -1,0 +1,7 @@
+# Função matemática exportada para o JavaScript
+export fn calculate_area(width: int, height: int) -> int:
+    return width * height
+
+# O main é ignorado no WASM quando usamos exports
+fn main() -> int:
+    return 0

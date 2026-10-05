@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lumina-lang"
+version = "1.0.0"
+description = "Lumina Programming Language Compiler and CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Adam Gabriel" }
+]
+dependencies = [
+    "llvmlite>=0.40.0"
+]
+
+[project.scripts]
+lumina = "lumina_cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lumina*", "lumina_cli*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "slow: testes que compilam muitos exemplos ou demoram >5s",
+    "e2e: testes end-to-end que invocam a CLI em subprocesso",
+    "smoke: smoke tests sobre examples/",
+]

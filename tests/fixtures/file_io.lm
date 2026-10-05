@@ -1,0 +1,9 @@
+# Teste de leitura e escrita de arquivos
+fn main() -> int:
+    let conteudo = "Log gerado pela Lumina em " + "agora."
+    write_file("log.txt", conteudo)
+    
+    let lido = read_file("log.txt")
+    print("Conteúdo lido do arquivo:")
+    print(lido)
+    return 0

@@ -1,0 +1,54 @@
+fn partition(arr: ptr, low: int, high: int) -> int:
+    let pivot = arr[high]
+    mut i = low - 1
+    
+    for j in low..high:
+        if arr[j] <= pivot:
+            i += 1
+            
+            # Swap arr[i] e arr[j]
+            let temp = arr[i]
+            arr[i] = arr[j]
+            arr[j] = temp
+            
+    # Swap arr[i+1] e arr[high]
+    let temp2 = arr[i + 1]
+    arr[i + 1] = arr[high]
+    arr[high] = temp2
+    
+    return i + 1
+
+fn quicksort(arr: ptr, low: int, high: int):
+    if low < high:
+        let pi = partition(arr, low, high)
+        quicksort(arr, low, pi - 1)
+        quicksort(arr, pi + 1, high)
+
+fn main() -> int:
+    # Aloca um array de 10 inteiros no Heap
+    mut arr = alloc(10)
+    
+    # Preenche com números desordenados
+    arr[0] = 9
+    arr[1] = 7
+    arr[2] = 5
+    arr[3] = 11
+    arr[4] = 12
+    arr[5] = 2
+    arr[6] = 14
+    arr[7] = 3
+    arr[8] = 10
+    arr[9] = 6
+    
+    print("Array original:")
+    for i in 0..10:
+        print(arr[i])
+        
+    # Ordena o array
+    quicksort(arr, 0, 9)
+    
+    print("Array ordenado (QuickSort):")
+    for i in 0..10:
+        print(arr[i])
+        
+    return 0

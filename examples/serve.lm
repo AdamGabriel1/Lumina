@@ -1,0 +1,43 @@
+import "std/http"
+import "std/epoll"
+
+fn main() -> int:
+    let porta = 8080
+    let server_fd = iniciar(porta)
+    
+    if server_fd < 0:
+        print("Erro ao iniciar Lumina-Serve")
+        return 1
+        
+    print("🚀 Lumina-Serve rodando em http://localhost:" + porta)
+    print("Use 'wrk -t4 -c100 http://localhost:8080/' para testar a carga!")
+    
+    let epfd = criar()
+    adicionar(epfd, server_fd)
+    
+    mut client_addr = alloc_bytes(16)
+    mut client_len_ptr = alloc_bytes(4)
+    client_len_ptr[0] = 16
+    
+    # Resposta JSON pronta para ser enviada (Zero-copy)
+    # Corpo: {"status":"online"}\n = 20 bytes
+    let resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 20\r\n\r\n{\"status\":\"online\"}\n"
+    let resp_len = len(resp)
+    
+    # Event Loop Principal
+    while true:
+        # Espera o Kernel avisar que há dados (Não bloqueia a CPU)
+        let events_ptr = esperar(epfd, 100)
+        
+        if events_ptr != 0:
+            # Aceita a conexão
+            let client_fd = accept(server_fd, client_addr, client_len_ptr)
+            if client_fd >= 0:
+                # Lê a requisição (descartada neste exemplo simples)
+                recv(client_fd, alloc_bytes(1024), 1024, 0)
+                
+                # Envia a resposta JSON
+                send(client_fd, resp, resp_len, 0)
+                close(client_fd)
+                
+    return 0

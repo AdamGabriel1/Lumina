@@ -1,0 +1,10 @@
+## Módulo Prelude (Auto-importado)
+## Define os tipos básicos disponíveis em todos os arquivos Lumina.
+
+enum Option:
+    Some(int)
+    None
+
+enum Result:
+    Ok(int)
+    Err(int)

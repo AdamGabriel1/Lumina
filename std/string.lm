@@ -1,0 +1,126 @@
+## std/string.lm — StringBuilder com crescimento geométrico.
+##
+## Uso:
+##   import "std/string"
+##
+##   mut sb = new_string_builder()
+##   sb.push_str("hello")
+##   sb.push_char(32)         # espaço
+##   sb.push_str("world")
+##   print(sb.finish())       # "hello world"
+##
+## Motivação: `s = s + chr(c)` em loop é O(n²). Aqui é amortizado O(1)
+## por byte, porque dobramos a capacidade geometricamente.
+##
+## Diferente de std/str, este é *imperativo*. Use quando estiver
+## construindo strings grandes byte-a-byte.
+
+struct StringBuilder:
+    buf: str        # i8* — buffer de bytes (null terminator só em finish)
+    len: int        # bytes usados (não conta o null)
+    cap: int        # bytes alocados
+
+let SB_INITIAL_CAP = 32
+
+impl StringBuilder:
+    ## Garante capacidade >= min_cap, dobrando geometricamente.
+    fn reserve(min_cap: int):
+        if min_cap <= self.cap:
+            return
+        mut new_cap = self.cap
+        if new_cap == 0:
+            new_cap = SB_INITIAL_CAP
+        while new_cap < min_cap:
+            new_cap = new_cap * 2
+        let new_buf = alloc_bytes(new_cap)
+        mut i = 0
+        while i < self.len:
+            new_buf[i] = self.buf[i]
+            i = i + 1
+        self.buf = new_buf
+        self.cap = new_cap
+
+    ## Adiciona um byte (char ASCII 0-255).
+    fn push_char(c: int):
+        if self.len >= self.cap:
+            self.reserve(self.len + 1)
+        self.buf[self.len] = c
+        self.len = self.len + 1
+
+    ## Adiciona uma string inteira.
+    fn push_str(s: str):
+        let n = len(s)
+        self.reserve(self.len + n)
+        mut i = 0
+        while i < n:
+            self.buf[self.len + i] = s[i]
+            i = i + 1
+        self.len = self.len + n
+
+    ## Adiciona um int em decimal (com sinal).
+    fn push_int(v: int):
+        if v == 0:
+            self.push_char(48)   # '0'
+            return
+        mut n = v
+        if n < 0:
+            self.push_char(45)   # '-'
+            n = -n
+        # Buffer auxiliar (no stack após escape analysis).
+        let digits = alloc_bytes(20)
+        mut count = 0
+        while n > 0:
+            digits[count] = 48 + (n % 10)
+            n = n / 10
+            count = count + 1
+        # Emite em ordem reversa.
+        mut i = count - 1
+        while i >= 0:
+            self.push_char(digits[i])
+            i = i - 1
+
+    ## Adiciona um float com 6 casas (como %f).
+    fn push_float(v: float):
+        # Parte inteira
+        let inteiro = v as int
+        self.push_int(inteiro)
+        self.push_char(46)   # '.'
+        # Parte fracionária (6 casas)
+        mut frac = v - (inteiro as float)
+        if frac < 0.0:
+            frac = -frac
+        mut i = 0
+        while i < 6:
+            frac = frac * 10.0
+            let dig = frac as int
+            self.push_char(48 + (dig % 10))
+            frac = frac - (dig as float)
+            i = i + 1
+
+    ## Finaliza: adiciona null terminator e devolve str.
+    ## Após isso, o StringBuilder está inválido (buf vira string imutável
+    ## por convenção), mas você ainda pode chamar `clear()` e reusar.
+    fn finish() -> str:
+        if self.len >= self.cap:
+            self.reserve(self.len + 1)
+        self.buf[self.len] = 0
+        return self.buf
+
+    ## Reseta para vazio. Mantém a capacidade (útil em loops).
+    fn clear():
+        self.len = 0
+        if self.cap > 0:
+            self.buf[0] = 0
+
+    ## Retorna o tamanho atual.
+    fn size() -> int:
+        return self.len
+
+## Cria um StringBuilder vazio.
+fn new_string_builder() -> StringBuilder:
+    mut sb: StringBuilder
+    sb.cap = SB_INITIAL_CAP
+    sb.len = 0
+    sb.buf = alloc_bytes(SB_INITIAL_CAP)
+    sb.buf[0] = 0
+    return sb

@@ -1,0 +1,14 @@
+struct Point:
+    x: int
+    y: int
+
+fn main() -> int:
+    print("Testando Struct Literals...")
+    
+    # Inicialização inline! Muito mais limpo.
+    let p = Point { x: 42, y: 99 }
+    
+    print("Ponto X:", p.x)
+    print("Ponto Y:", p.y)
+    
+    return 0

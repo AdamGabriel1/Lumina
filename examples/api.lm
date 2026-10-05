@@ -1,0 +1,50 @@
+import "std/http"
+
+fn main() -> int:
+    let porta = 8080
+    let server_fd = iniciar(porta)
+    
+    if server_fd < 0:
+        return 1
+        
+    print("Servidor API rodando em http://localhost:" + porta)
+    
+    mut client_addr = alloc_bytes(16)
+    mut client_len_ptr = alloc_bytes(4)
+    client_len_ptr[0] = 16
+    mut request_buffer = alloc_bytes(1024)
+    
+    # Content-Length corrigido para o tamanho exato do corpo (Body)
+    # <h1>Home</h1> = 13 bytes
+    let home_resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 13\r\n\r\n<h1>Home</h1>"
+    
+    # {"status":"online"} = 19 bytes
+    let api_resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 19\r\n\r\n{\"status\":\"online\"}"
+    
+    # <h1>404 Not Found</h1> = 22 bytes
+    let not_found_resp = "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: 22\r\n\r\n<h1>404 Not Found</h1>"
+    
+    while true:
+        let client_fd = accept(server_fd, client_addr, client_len_ptr)
+        if client_fd < 0:
+            continue
+            
+        recv(client_fd, request_buffer, 1024, 0)
+        
+        # Rota 1: Home ("GET / ")
+        if request_buffer[0] == 71 and request_buffer[1] == 69 and request_buffer[2] == 84 and request_buffer[3] == 32 and request_buffer[4] == 47 and request_buffer[5] == 32:
+            send(client_fd, home_resp, len(home_resp), 0)
+            close(client_fd)
+            continue
+            
+        # Rota 2: /api ("GET /a...")
+        if request_buffer[0] == 71 and request_buffer[1] == 69 and request_buffer[2] == 84 and request_buffer[3] == 32 and request_buffer[4] == 47 and request_buffer[5] == 97:
+            send(client_fd, api_resp, len(api_resp), 0)
+            close(client_fd)
+            continue
+            
+        # 404 Not Found
+        send(client_fd, not_found_resp, len(not_found_resp), 0)
+        close(client_fd)
+        
+    return 0

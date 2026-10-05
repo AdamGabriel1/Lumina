@@ -1,0 +1,58 @@
+import "std/net"
+
+fn main() -> int:
+    let porta_proxy = 8080
+    let porta_backend = 3000
+    
+    let server_fd = iniciar(porta_proxy)
+    if server_fd < 0:
+        print("Erro ao iniciar proxy na porta " + porta_proxy)
+        return 1
+        
+    print("🚀 Proxy Reverso rodando na porta " + porta_proxy + " -> Backend na " + porta_backend)
+    
+    mut client_addr = alloc_bytes(16)
+    mut client_len_ptr = alloc_bytes(4)
+    client_len_ptr[0] = 16
+    mut request_buffer = alloc_bytes(4096)
+    mut response_buffer = alloc_bytes(4096)
+    
+    # Resposta de erro para quando o backend estiver offline (Content-Length: 24 bytes)
+    let bad_gateway = "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 24\r\n\r\n<h1>502 Bad Gateway</h1>"
+    let bad_gateway_len = len(bad_gateway)
+    
+    while true:
+        # 1. Aceita conexão do cliente (navegador/curl)
+        let client_fd = accept(server_fd, client_addr, client_len_ptr)
+        if client_fd < 0:
+            continue
+            
+        # 2. Lê a requisição HTTP do cliente
+        let bytes_lidos = recv(client_fd, request_buffer, 4096, 0)
+        if bytes_lidos <= 0:
+            close(client_fd)
+            continue
+            
+        # 3. Conecta ao Backend
+        let backend_fd = conectar_backend(porta_backend)
+        if backend_fd < 0:
+            # Se o backend estiver offline, retorna 502 Bad Gateway
+            send(client_fd, bad_gateway, bad_gateway_len, 0)
+            close(client_fd)
+            continue
+            
+        # 4. Encaminha a requisição para o Backend
+        send(backend_fd, request_buffer, bytes_lidos, 0)
+        
+        # 5. Lê a resposta do Backend
+        let bytes_resp = recv(backend_fd, response_buffer, 4096, 0)
+        
+        # 6. Encaminha a resposta de volta para o Cliente
+        if bytes_resp > 0:
+            send(client_fd, response_buffer, bytes_resp, 0)
+            
+        # 7. Fecha as conexões
+        close(backend_fd)
+        close(client_fd)
+        
+    return 0

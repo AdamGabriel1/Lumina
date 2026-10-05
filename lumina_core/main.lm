@@ -1,0 +1,23 @@
+# lumina_core/main.lm
+#
+# Entrypoint do compilador self-hosted. Só faz parse + dump da AST.
+# Semantic e codegen vêm depois que o parser estiver paritário.
+
+import "lumina_core/parser"
+
+fn main() -> int:
+    mut filename = "_lexer_sample.lm"
+    if len(argv(1)) > 0:
+        filename = argv(1)
+
+    let source = read_file(filename)
+    if len(source) == 0:
+        print("erro: arquivo vazio ou nao encontrado:", filename)
+        return 1
+
+    let root = parse_source(source, filename)
+
+    _emit_line(0, node_kinds[root], _str_get(root))
+    dump_sibling(node_nexts[root], 1)
+
+    return 0

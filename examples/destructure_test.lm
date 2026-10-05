@@ -1,0 +1,25 @@
+fn obter_coordenadas() -> ptr:
+    mut arr = alloc(2)
+    arr[0] = 42
+    arr[1] = 99
+    return arr
+
+fn main() -> int:
+    print("Testando Destructuring...")
+    
+    # Destructuring! Extrai x e y em uma única linha
+    let (x, y) = obter_coordenadas()
+    
+    print("X:", x)
+    print("Y:", y)
+    
+    # Também funciona com arrays literais
+    mut dados = alloc(3)
+    dados[0] = 10
+    dados[1] = 20
+    dados[2] = 30
+    
+    let (a, b, c) = dados
+    print("A:", a, "B:", b, "C:", c)
+    
+    return 0

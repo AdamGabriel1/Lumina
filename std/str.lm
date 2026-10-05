@@ -1,0 +1,118 @@
+# std/str.lm — Funções de string (parcialmente bootstrapped).
+import "std/string"
+
+# Converte uma string para maiúsculas. O(n) graças ao StringBuilder.
+fn to_upper(s: str) -> str:
+    mut sb = new_string_builder()
+    sb.reserve(len(s) + 1)
+    let n = len(s)
+    mut i = 0
+    while i < n:
+        let c = s[i]
+        if c >= 97 and c <= 122:
+            sb.push_char(c - 32)
+        else:
+            sb.push_char(c)
+        i = i + 1
+    return sb.finish()
+
+# Converte uma string para minúsculas. O(n).
+fn to_lower(s: str) -> str:
+    mut sb = new_string_builder()
+    sb.reserve(len(s) + 1)
+    let n = len(s)
+    mut i = 0
+    while i < n:
+        let c = s[i]
+        if c >= 65 and c <= 90:
+            sb.push_char(c + 32)
+        else:
+            sb.push_char(c)
+        i = i + 1
+    return sb.finish()
+
+# Remove espaços do início e do fim.
+fn trim(s: str) -> str:
+    let length = len(s)
+    mut start = 0
+    mut end = length - 1
+    while start < length and s[start] == 32:
+        start += 1
+    while end >= 0 and s[end] == 32:
+        end -= 1
+    if start > end:
+        return ""
+    return s[start..end + 1]
+
+# Verifica se termina com um sufixo.
+fn ends_with(s: str, suffix: str) -> int:
+    let s_len = len(s)
+    let suf_len = len(suffix)
+    if suf_len > s_len:
+        return 0
+    let s_end = s[s_len - suf_len..s_len]
+    if s_end == suffix:
+        return 1
+    return 0
+
+# Divide uma string por um delimitador. Retorna ptr (array de str).
+fn split(s: str, delimiter: str) -> ptr:
+    let length = len(s)
+    let d_len = len(delimiter)
+    mut result = alloc(100)
+    mut res_idx = 0
+    mut i = 0
+    mut current_word = ""
+    while i < length:
+        let c = s[i]
+        if c == delimiter[0] and i + d_len <= length:
+            mut is_match = 1
+            mut j = 1
+            while j < d_len:
+                if s[i+j] != delimiter[j]:
+                    is_match = 0
+                    break
+                j += 1
+            if is_match == 1:
+                result[res_idx] = current_word as int
+                res_idx += 1
+                current_word = ""
+                i += d_len
+                continue
+        current_word = current_word + chr(c)
+        i += 1
+    if len(current_word) > 0:
+        result[res_idx] = current_word as int
+        res_idx += 1
+    result[res_idx] = 0
+    return result
+
+# Junta um array de strings (ponteiros como int) usando um separador.
+fn join(arr: ptr, delimiter: str) -> str:
+    mut res = ""
+    mut i = 0
+    while arr[i] != 0:
+        if len(res) > 0:
+            res = res + delimiter
+        res = res + (arr[i] as str)
+        i += 1
+    return res
+
+# Retorna a substring [start, start+length).
+fn substr(s: str, start: int, length: int) -> str:
+    return s[start..start + length]
+
+# Encontra a primeira ocorrência de `alvo` em `texto`. -1 se não achar.
+fn find(texto: str, alvo: str) -> int:
+    let n = len(texto)
+    let m = len(alvo)
+    if m == 0:
+        return 0
+    if m > n:
+        return -1
+    mut i = 0
+    while i <= n - m:
+        if texto[i..i + m] == alvo:
+            return i
+        i += 1
+    return -1

@@ -1,0 +1,11 @@
+fn fib(n: int) -> int:
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+fn main() -> int:
+    mut n = 35
+    if len(argv(1)) > 0:
+        n = atoi(argv(1))
+    print("", fib(n))
+    return 0

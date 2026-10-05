@@ -1,0 +1,19 @@
+=== Array original ===
+Soma: 15
+Produto: 120
+Min: 1
+Max: 5
+=== map ===
+Dobrados somam: 30
+=== filter ===
+Quantidade de pares: 2
+Soma dos pares: 6
+=== all / any ===
+Todos positivos? 1
+Algum > 3? 1
+=== find_index ===
+Índice do 4: 3
+=== for_each ===
+Após +10, soma: 65
+=== reverse ===
+Primeiro elemento após reverse: 15

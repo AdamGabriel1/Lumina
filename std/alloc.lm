@@ -1,0 +1,69 @@
+## Módulo de Alocação de Memória (std/alloc)
+## Arena Allocator para sistemas Bare-Metal e alta performance (--no-gc).
+##
+## ⚠️  NOTA IMPORTANTE — shadowing do builtin `alloc`
+##
+## O compilador Lumina tem `alloc` como builtin (`lumina/builtins.py`):
+##   alloc(N)        → aloca N * 8 bytes no heap (i64*)
+##   alloc_bytes(N)  → aloca N bytes no heap (i8*)
+##
+## Este módulo define `fn alloc(a: Arena, size: int) -> ptr`, que
+## **sombreia** o builtin no escopo do importador. Como o dispatch do
+## codegen tenta builtin ANTES de user function, chamar `alloc(x, 16)`
+## (2 args) pode resolver para o builtin, que espera 1 arg — gerando
+## erro confuso ou comportamento silenciosamente errado.
+##
+## Para evitar ambiguidade:
+##   - Use `arena_alloc(a, size)` (alias explícito, abaixo) em código novo.
+##   - Ou importe com prefixo: `import "std/alloc"` e chame `std.alloc(...)`.
+##
+## O nome `alloc` foi mantido por compatibilidade histórica.
+
+extern fn malloc(size: int) -> ptr
+extern fn free(ptr: ptr)
+
+# Estrutura da Arena
+struct Arena:
+    buffer: ptr
+    offset: int
+    capacity: int
+
+## Cria uma nova Arena com a capacidade especificada (em bytes)
+fn init(cap: int) -> Arena:
+    mut a: Arena
+    a.buffer = malloc(cap)
+    a.offset = 0
+    a.capacity = cap
+    return a
+
+## Aloca memória na Arena. Tempo O(1)!
+##
+## ⚠️  Este nome sombreia o builtin `alloc` do compilador. Veja o
+## cabeçalho do módulo para detalhes. Prefira `arena_alloc` em
+## código novo.
+fn alloc(a: Arena, size: int) -> ptr:
+    # Verifica se há espaço
+    if a.offset + size > a.capacity:
+        return 0 # Out of Memory
+
+    # Calcula o ponteiro atual
+    let ptr = a.buffer + a.offset
+
+    # Incrementa o offset (Bump!)
+    a.offset += size
+
+    return ptr
+
+## Alias explícito para `alloc(arena, size)`.
+## Existe para evitar ambiguidade com o builtin `alloc(N)` do compilador.
+## Prefira esta forma em código novo.
+fn arena_alloc(a: Arena, size: int) -> ptr:
+    return alloc(a, size)
+
+## Reseta a Arena (zera o offset, mas não libera a memória do SO)
+fn reset(a: Arena):
+    a.offset = 0
+
+## Destrói a Arena e libera a memória de volta para o SO
+fn destroy(a: Arena):
+    free(a.buffer)

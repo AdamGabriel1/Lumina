@@ -1,0 +1,29 @@
+fn main() -> int:
+    mut n = 200
+    if len(argv(1)) > 0:
+        n = atoi(argv(1))
+
+    let size = n * n
+
+    mut a = alloc(size)
+    mut b = alloc(size)
+    mut c = alloc(size)
+
+    for i in 0..size:
+        a[i] = i % 10
+        b[i] = (i * 2) % 10
+        c[i] = 0
+
+    for i in 0..n:
+        for j in 0..n:
+            mut s = 0
+            for k in 0..n:
+                s += a[i * n + k] * b[k * n + j]
+            c[i * n + j] = s
+
+    mut total = 0
+    for i in 0..size:
+        total += c[i]
+
+    print("", total)
+    return 0

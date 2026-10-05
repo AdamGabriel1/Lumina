@@ -1,0 +1,29 @@
+## Módulo de Corrotinas (Green Threads) via ucontext
+extern fn getcontext(ucp: str) -> int
+extern fn makecontext(ucp: str, func: int, argc: int, arg: int)
+extern fn swapcontext(oucp: str, ucp: str) -> int
+
+# Tamanho da stack para cada corrotina (16 KB)
+let STACK_SIZE = 16384
+
+# Estrutura do ucontext_t (simplificada para alocar memória)
+# No Linux x64, o ucontext_t tem cerca de 936 bytes. Vamos alocar 1024.
+let CTX_SIZE = 1024
+
+mut main_ctx = alloc_bytes(CTX_SIZE)
+mut scheduler_ctx = alloc_bytes(CTX_SIZE)
+mut current_task = 0
+
+# Inicia o escalonador de corrotinas
+fn run():
+    # Salva o contexto principal e pula para o escalonador
+    swapcontext(main_ctx, scheduler_ctx)
+
+# Função wrapper que o escalonador chama
+fn task_wrapper(func: int):
+    # Em uma implementação real, chamaríamos a função pelo ponteiro.
+    # Como nosso FFI não suporta chamar ponteiros de função diretamente ainda,
+    # vamos simular a troca de contexto imprimindo na tela.
+    print("Corrotina executando...")
+    # Volta para o contexto principal
+    swapcontext(scheduler_ctx, main_ctx)

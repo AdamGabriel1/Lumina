@@ -1,0 +1,51 @@
+## std/test.lm - Framework minimalista de testes.
+##
+## Uso:
+##   import "std/test"
+##
+##   test "meu teste":
+##       let f = check_eq(1 + 1, 2, "1+1")
+##       return f
+##
+## O `lumina test` executa cada bloco `test "..."` e soma o retorno
+## (0 = passou, >0 = nº de falhas). Exit code = total de falhas.
+
+## Compara dois ints. Retorna 0 se iguais, 1 se diferentes.
+fn check_eq(actual: int, expected: int, msg: str) -> int:
+    if actual == expected:
+        print("  [PASS]", msg)
+        return 0
+    print("  [FAIL]", msg, "- esperado:", expected, "obtido:", actual)
+    return 1
+
+## Compara dois ints. Retorna 0 se diferentes, 1 se iguais.
+fn check_ne(a: int, b: int, msg: str) -> int:
+    if a != b:
+        print("  [PASS]", msg)
+        return 0
+    print("  [FAIL]", msg, "- esperado != ", b)
+    return 1
+
+## Verifica que `cond` é verdadeiro. Retorna 0 se true, 1 se false.
+fn check_true(cond: bool, msg: str) -> int:
+    if cond:
+        print("  [PASS]", msg)
+        return 0
+    print("  [FAIL]", msg, "- esperado true")
+    return 1
+
+## Verifica que `cond` é falso. Retorna 0 se false, 1 se true.
+fn check_false(cond: bool, msg: str) -> int:
+    if not cond:
+        print("  [PASS]", msg)
+        return 0
+    print("  [FAIL]", msg, "- esperado false")
+    return 1
+
+## Compara duas strings por conteúdo (usa strcmp).
+fn check_str_eq(actual: str, expected: str, msg: str) -> int:
+    if actual == expected:
+        print("  [PASS]", msg)
+        return 0
+    print("  [FAIL]", msg, "- esperado:", expected, "obtido:", actual)
+    return 1

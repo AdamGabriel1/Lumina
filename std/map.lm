@@ -1,0 +1,136 @@
+## Map: hash map de int → int com dois arrays paralelos.
+## Uso:
+##   mut m = new_map()
+##   m.insert(42, 100)
+##   print(m.get(42))   # 100
+##
+## Cresce automaticamente (rehash) quando size >= cap * 0.75.
+struct Map:
+    keys: ptr      # -1 = slot vazio, -2 = tombstone (removido)
+    values: ptr
+    size: int
+    cap: int
+
+let MAP_INITIAL_CAP = 16
+
+fn _map_hash(key: int, cap: int) -> int:
+    return key & (cap - 1)
+
+impl Map:
+    ## Rehash: dobra a capacidade e reinsere todos os elementos vivos.
+    ## Tombstones (-2) são descartados.
+    fn rehash():
+        let old_keys = self.keys
+        let old_values = self.values
+        let old_cap = self.cap
+
+        self.cap = old_cap * 2
+        self.keys = alloc(self.cap)
+        self.values = alloc(self.cap)
+        self.size = 0
+
+        mut i = 0
+        while i < self.cap:
+            self.keys[i] = -1
+            self.values[i] = 0
+            i += 1
+
+        mut i = 0
+        while i < old_cap:
+            if old_keys[i] != -1 and old_keys[i] != -2:
+                self.insert(old_keys[i], old_values[i])
+            i += 1
+
+    ## Insere ou atualiza um par chave-valor.
+    fn insert(key: int, value: int):
+        # Rehash se load factor >= 0.75
+        if self.size * 4 >= self.cap * 3:
+            self.rehash()
+
+        let idx = _map_hash(key, self.cap)
+        mut i = idx
+        mut probes = 0
+        mut first_tombstone = -1
+
+        while probes < self.cap:
+            let k = self.keys[i]
+            if k == -1:
+                # Slot vazio: insere aqui (ou no primeiro tombstone visto)
+                if first_tombstone != -1:
+                    self.keys[first_tombstone] = key
+                    self.values[first_tombstone] = value
+                else:
+                    self.keys[i] = key
+                    self.values[i] = value
+                self.size += 1
+                return
+            if k == -2:
+                # Tombstone: guarda a posição, continua procurando
+                if first_tombstone == -1:
+                    first_tombstone = i
+            elif k == key:
+                self.values[i] = value
+                return
+            i = (i + 1) & (self.cap - 1)
+            probes += 1
+
+    ## Busca um valor. Retorna -1 se não achar.
+    fn get(key: int) -> int:
+        let idx = _map_hash(key, self.cap)
+        mut i = idx
+        mut probes = 0
+        while probes < self.cap:
+            let k = self.keys[i]
+            if k == -1:
+                return -1
+            if k == key:
+                return self.values[i]
+            i = (i + 1) & (self.cap - 1)
+            probes += 1
+        return -1
+
+    ## Retorna 1 se a chave existe; senão 0.
+    fn contains(key: int) -> int:
+        let idx = _map_hash(key, self.cap)
+        mut i = idx
+        mut probes = 0
+        while probes < self.cap:
+            let k = self.keys[i]
+            if k == -1:
+                return 0
+            if k == key:
+                return 1
+            i = (i + 1) & (self.cap - 1)
+            probes += 1
+        return 0
+
+    ## Remove uma chave. Retorna 1 se removeu; 0 se não achou.
+    fn remove(key: int) -> int:
+        let idx = _map_hash(key, self.cap)
+        mut i = idx
+        mut probes = 0
+        while probes < self.cap:
+            let k = self.keys[i]
+            if k == -1:
+                return 0
+            if k == key:
+                self.keys[i] = -2
+                self.size -= 1
+                return 1
+            i = (i + 1) & (self.cap - 1)
+            probes += 1
+        return 0
+
+## Cria um novo Map vazio (função livre).
+fn new_map() -> Map:
+    mut m: Map
+    m.cap = MAP_INITIAL_CAP
+    m.size = 0
+    m.keys = alloc(MAP_INITIAL_CAP)
+    m.values = alloc(MAP_INITIAL_CAP)
+    mut i = 0
+    while i < MAP_INITIAL_CAP:
+        m.keys[i] = -1
+        m.values[i] = 0
+        i += 1
+    return m

@@ -1,0 +1,35 @@
+# Função com Parâmetro Padrão
+fn greet(name: str = "World", times: int = 1):
+    mut i = 0
+    while i < times:
+        let msg = "Hello, " + name + "!"
+        print(msg)
+        i += 1
+
+fn main() -> int:
+    print("Testando Parâmetros Padrão...")
+    
+    # Usa os valores padrão
+    greet()
+    
+    # Sobrescreve apenas o primeiro
+    greet("Lumina")
+    
+    # Sobrescreve ambos
+    greet("Sistemas", 3)
+    
+    print("")
+    print("Testando Operador 'in'...")
+    let x = 5
+    if x in 0..10:
+        print("X está entre 0 e 10!")
+    else:
+        print("X está fora do range.")
+        
+    let y = 50
+    if y in 0..10:
+        print("Y está entre 0 e 10!")
+    else:
+        print("Y está fora do range.")
+    
+    return 0

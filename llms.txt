@@ -1,0 +1,32 @@
+# Lumina
+
+> Linguagem de programação compilada para LLVM. Toolchain em Python
+> (`lumina/`, `lumina_cli/`), stdlib em `.lm` (`std/`), extensão
+> VSCode com LSP (`lumina-vscode/`).
+
+## Comece por aqui
+- [Índice da doc](docs/index.md)
+- [Guia rápido](docs/getting-started/guia-rapido.md)
+- [Linguagem](docs/guia/linguagem.md)
+- [Stdlib](docs/guia/stdlib.md)
+- [CLI](docs/referencia/cli.md)
+- [Arquitetura](docs/internals/arquitetura.md)
+
+## Engenharia
+- [Benchmarks](docs/engineering/benchmarks.md)
+- [Bugs](docs/engineering/bugs.md)
+- [Testes](docs/engineering/tests.md)
+- [ADRs](docs/engineering/decisoes/)
+
+## Código
+- `lumina/lexer/` — tokenização
+- `lumina/parser/` — AST
+- `lumina/semantic/` — type check, traits, monomorfização
+- `lumina/codegen/` — LLVM IR
+- `lumina_cli/commands/` — comandos CLI
+- `std/` — stdlib em `.lm`
+
+## Optional
+- [CHANGELOG](CHANGELOG.md)
+- [Contributing](docs/contributing.md)
+- [Extensão VSCode](lumina-vscode/README.md)

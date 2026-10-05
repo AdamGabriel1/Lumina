@@ -1,0 +1,10 @@
+# util.lm
+fn saudacao(nome: str) -> int:
+    let msg = "Ola " + nome
+    print(msg)
+    return 0
+
+fn criar_log():
+    let conteudo = "Sistema iniciado com sucesso!"
+    write_file("log.txt", conteudo)
+    return 0

@@ -1,0 +1,22 @@
+import "std/math"
+import "std/fs"
+
+fn main() -> int:
+    print("Testando a Standard Library:")
+    
+    let base = 2.0
+    let exp = 10.0
+    let res = potencia(base, exp)
+    print("2 elevado a 10 é:", res)
+    
+    let raiz = raiz_quadrada(144.0)
+    print("Raiz de 144 é:", raiz)
+    
+    print("Criando um arquivo...")
+    write_file("teste.txt", "Conteudo da stdlib!")
+    
+    print("Deletando o arquivo...")
+    let ret = deletar_arquivo("teste.txt")
+    print("Código de retorno do delete:", ret)
+    
+    return 0

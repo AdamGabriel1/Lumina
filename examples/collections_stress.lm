@@ -1,0 +1,52 @@
+import "std/map"
+import "std/set"
+import "std/deque"
+
+## Testa rehash (Map/Set) e grow (Deque) inserindo
+## 100 elementos — bem acima do cap inicial (16).
+
+fn main() -> int:
+    print("=== Map com rehash ===")
+    mut m = new_map()
+    mut i = 0
+    while i < 100:
+        m.insert(i, i * 10)
+        i += 1
+    print("size:", m.size)
+    print("get(0):", m.get(0))
+    print("get(50):", m.get(50))
+    print("get(99):", m.get(99))
+    print("get(100):", m.get(100))
+    print("contains(42):", m.contains(42))
+    print("contains(100):", m.contains(100))
+
+    print("=== Map com remove + reinsert ===")
+    m.remove(50)
+    print("contains(50):", m.contains(50))
+    print("get(50):", m.get(50))
+    m.insert(50, 5000)
+    print("get(50):", m.get(50))
+
+    print("=== Set com rehash ===")
+    mut s = new_set()
+    mut j = 0
+    while j < 100:
+        s.add(j)
+        j += 1
+    print("size:", s.size)
+    print("contains(0):", s.contains(0))
+    print("contains(99):", s.contains(99))
+    print("contains(100):", s.contains(100))
+
+    print("=== Deque com grow ===")
+    mut d = new_deque()
+    mut k = 0
+    while k < 100:
+        d.push_back(k)
+        k += 1
+    print("size:", d.size)
+    print("get(0):", d.get(0))
+    print("get(50):", d.get(50))
+    print("get(99):", d.get(99))
+
+    return 0

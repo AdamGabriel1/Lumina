@@ -1,0 +1,40 @@
+# Definindo uma Struct de Vetor 2D
+struct Vector2:
+    x: int
+    y: int
+
+# Implementando os operadores para Vector2
+impl Vector2:
+    fn __add__(a: Vector2, b: Vector2) -> Vector2:
+        mut result: Vector2
+        result.x = a.x + b.x
+        result.y = a.y + b.y
+        return result
+
+    fn __eq__(a: Vector2, b: Vector2) -> int:
+        if a.x == b.x and a.y == b.y:
+            return 1
+        return 0
+
+fn main() -> int:
+    print("Testando Operator Overloading...")
+    
+    mut v1: Vector2
+    v1.x = 10
+    v1.y = 20
+    
+    mut v2: Vector2
+    v2.x = 5
+    v2.y = 5
+    
+    # Usando o operador + sobrecarregado!
+    let v3 = v1 + v2
+    
+    print("V3 X:", v3.x)
+    print("V3 Y:", v3.y)
+    
+    # Usando o operador == sobrecarregado!
+    let iguais = v1 == v2
+    print("V1 é igual a V2?", iguais)
+    
+    return 0

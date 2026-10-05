@@ -1,0 +1,31 @@
+import "std/log"
+
+fn main() -> int:
+    print("=== nível INFO (padrão) ===")
+    set_level(LOG_LEVEL_INFO)
+    log_debug("debug (não deve aparecer)")
+    log_info("info aparece")
+    log_warn("warn aparece")
+    log_error("error aparece")
+
+    print("")
+    print("=== nível DEBUG ===")
+    set_level(LOG_LEVEL_DEBUG)
+    log_debug("agora debug aparece")
+    log_info("info continua aparecendo")
+    log_warn("warn idem")
+    log_error("error idem")
+
+    print("")
+    print("=== nível ERROR ===")
+    set_level(LOG_LEVEL_ERROR)
+    log_debug("debug filtrado")
+    log_info("info filtrado")
+    log_warn("warn filtrado")
+    log_error("só error aparece")
+
+    print("")
+    print("=== get_level() ===")
+    print("nível atual:", get_level())
+
+    return 0

@@ -1,0 +1,16 @@
+# Módulo Raylib (std/raylib)
+# Engine de jogos e gráficos 2D/3D via FFI.
+
+extern fn InitWindow(width: int, height: int, title: str)
+extern fn CloseWindow()
+extern fn WindowShouldClose() -> int
+extern fn BeginDrawing()
+extern fn EndDrawing()
+extern fn ClearBackground(color: int)
+extern fn DrawText(text: str, x: int, y: int, fontSize: int, color: int)
+
+# Cores (Formato Hex: 0xRRGGBBAA)
+let RAYWHITE = 0xFFFFFFFF
+let BLACK = 0x000000FF
+let RED = 0xFF0000FF
+let GREEN = 0x00FF00FF

@@ -1,0 +1,30 @@
+import "std/json"
+
+# Necessário para a função nativa int() retornar Ok/None
+enum Option:
+    Some(int)
+    None
+
+struct User:
+    name: str
+    age: int
+
+fn main() -> int:
+    print("Testando JSON Parser Nativo...")
+    
+    let payload = "{\"name\":\"Adam\",\"age\":25}"
+    
+    # Extrai os valores do JSON usando as funções importadas diretamente
+    let extracted_name = get_str(payload, "name")
+    let extracted_age = get_int(payload, "age")
+    
+    print("Nome extraído:", extracted_name)
+    print("Idade extraída:", extracted_age)
+    
+    # Cria uma Struct com os dados extraídos
+    let user = User { name: extracted_name, age: extracted_age }
+    
+    print("Usuário criado:", user.name)
+    print("Idade do usuário:", user.age)
+    
+    return 0

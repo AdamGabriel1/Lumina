@@ -1,0 +1,11 @@
+import "std/async_fs"
+import "std/fs"
+
+fn main() -> int:
+    print("🚀 Testando I/O Assíncrono...")
+    
+    write_file("teste_async.txt", "Dados do arquivo assíncrono!")
+    let dados = read_file_async("teste_async.txt")
+    print("Conteúdo lido:", dados)
+    
+    return 0

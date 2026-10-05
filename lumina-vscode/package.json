@@ -1,0 +1,84 @@
+{
+  "name": "lumina",
+  "displayName": "Lumina Language Support",
+  "description": "Syntax highlighting and LSP for the Lumina programming language",
+  "version": "0.2.0",
+  "publisher": "adam-lumina",
+  "engines": {
+    "vscode": "^1.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adamgabriel701/Lumina.git"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:lumina"
+  ],
+  "main": "./extension.js",
+  "files": [
+    "extension.js",
+    "lumina_lsp.py",
+    "syntaxes/lumina.tmLanguage.json",
+    "language-configuration.json"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "lumina",
+        "aliases": [
+          "Lumina",
+          "lumina"
+        ],
+        "extensions": [
+          ".lm"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "lumina",
+        "scopeName": "source.lumina",
+        "path": "./syntaxes/lumina.tmLanguage.json"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "lumina",
+        "scopes": {
+          "namespace": ["entity.name.namespace.lumina"],
+          "type": ["entity.name.type.lumina"],
+          "class": ["entity.name.type.class.lumina"],
+          "enum": ["entity.name.type.enum.lumina"],
+          "interface": ["entity.name.type.interface.lumina"],
+          "struct": ["entity.name.type.struct.lumina"],
+          "typeParameter": ["entity.name.type.parameter.lumina"],
+          "parameter": ["variable.parameter.lumina"],
+          "variable": ["variable.other.lumina"],
+          "property": ["variable.other.property.lumina"],
+          "enumMember": ["variable.other.enummember.lumina"],
+          "event": ["variable.other.event.lumina"],
+          "function": ["entity.name.function.lumina"],
+          "method": ["entity.name.function.member.lumina"],
+          "macro": ["entity.name.function.macro.lumina"],
+          "keyword": ["keyword.lumina"],
+          "modifier": ["storage.modifier.lumina"],
+          "comment": ["comment.lumina"],
+          "string": ["string.lumina"],
+          "number": ["constant.numeric.lumina"],
+          "regexp": ["string.regexp.lumina"],
+          "operator": ["keyword.operator.lumina"]
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^8.1.0"
+  }
+}

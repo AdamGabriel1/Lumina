@@ -1,0 +1,820 @@
+# lumina_core/lexer.lm — Lexer self-hosted da Lumina (Sprint 12)
+#
+# Porte completo do lexer Python original.
+# Cobre: identificadores, keywords, números (int/float/hex/bin/oct), strings,
+# strings interpoladas, operadores, comentários, newlines e INDENT/DEDENT.
+#
+# Limite: 4096 tokens por chamada (buffer pré-alocado em `tokenize`).
+
+# ============================================================
+# Códigos de tipo de token (espelham TokenType.name em Python)
+# ============================================================
+let T_EOF       = 0
+let T_NEWLINE   = 1
+let T_COMMENT   = 2
+let T_IDENT     = 3
+let T_NUMBER    = 4
+let T_FLOAT     = 5
+let T_STRING    = 6
+let T_INDENT    = 8
+let T_DEDENT    = 9
+
+# Keywords
+let T_LET       = 10
+let T_CONST     = 11
+let T_MUT       = 12
+let T_FN        = 13
+let T_RETURN    = 14
+let T_IF        = 15
+let T_ELIF      = 16
+let T_ELSE      = 17
+let T_WHILE     = 18
+let T_FOR       = 19
+let T_IN        = 20
+let T_BREAK     = 21
+let T_CONTINUE  = 22
+let T_DEFER     = 23
+let T_ERRDEFER  = 24
+let T_MATCH     = 25
+let T_CASE      = 26
+let T_DEFAULT   = 27
+let T_SWITCH    = 28
+let T_STRUCT    = 29
+let T_ENUM      = 30
+let T_IMPL      = 31
+let T_TRAIT     = 32
+let T_IMPORT    = 33
+let T_EXTERN    = 34
+let T_ASSERT    = 35
+let T_BENCH     = 36
+let T_TEST      = 37
+let T_COMPTIME  = 38
+let T_EXPORT    = 39
+let T_AS        = 40
+let T_TYPE      = 41
+let T_TRUE      = 42
+let T_FALSE     = 43
+let T_NONE      = 44
+let T_NIL       = 45
+let T_NOT       = 46
+
+# Operadores aritméticos
+let T_PLUS      = 50
+let T_MINUS     = 51
+let T_STAR      = 52
+let T_SLASH     = 53
+let T_PERCENT   = 54
+
+# Bitwise
+let T_AMP       = 55
+let T_PIPE      = 56
+let T_CARET     = 57
+let T_TILDE     = 58
+let T_SHL       = 59
+let T_SHR       = 60
+
+# Comparação e lógicos
+let T_EQ        = 65
+let T_NEQ       = 66
+let T_LT        = 67
+let T_GT        = 68
+let T_LTE       = 69
+let T_GTE       = 70
+let T_AND       = 71
+let T_OR        = 72
+let T_BANG      = 73
+
+# Atribuição
+let T_ASSIGN    = 80
+let T_PLUS_ASS  = 81
+let T_MINUS_ASS = 82
+let T_STAR_ASS  = 83
+let T_SLASH_ASS = 84
+let T_AMP_ASS   = 85
+let T_PIPE_ASS  = 86
+let T_CARET_ASS = 87
+
+# Pontuação
+let T_LPAREN    = 90
+let T_RPAREN    = 91
+let T_LBRACE    = 92
+let T_RBRACE    = 93
+let T_LBRACKET  = 94
+let T_RBRACKET  = 95
+let T_COMMA     = 96
+let T_DOT       = 97
+let T_DOT_DOT   = 98
+let T_COLON     = 99
+let T_COLON_ASS = 100
+let T_DCOLON    = 101
+let T_SEMI      = 102
+let T_ARROW     = 103
+let T_FAT_ARROW = 104
+let T_QUESTION  = 105
+let T_AT        = 106
+let T_DOLLAR    = 107
+
+# ============================================================
+# Estruturas de dados
+# ============================================================
+struct TokenList:
+    types: ptr      # i64[] — código de tipo (T_*)
+    values: ptr     # i64[] — ponteiro (str) para o texto
+    lines: ptr      # i64[]
+    cols: ptr       # i64[]
+    size: int
+    cap: int
+
+fn new_token_list(cap: int) -> TokenList:
+    mut tl: TokenList
+    tl.types = alloc(cap)
+    tl.values = alloc(cap)
+    tl.lines = alloc(cap)
+    tl.cols = alloc(cap)
+    tl.size = 0
+    tl.cap = cap
+    return tl
+
+fn push_token(tl: TokenList, ttype: int, value: str, line: int, col: int):
+    if tl.size >= tl.cap:
+        return
+    let i = tl.size
+    tl.types[i] = ttype
+    tl.values[i] = value as int
+    tl.lines[i] = line
+    tl.cols[i] = col
+    tl.size = tl.size + 1
+
+# Nome simbólico do tipo de token (para debug/testes)
+fn type_name(t: int) -> str:
+    if t == T_EOF: return "EOF"
+    if t == T_NEWLINE: return "NEWLINE"
+    if t == T_COMMENT: return "COMMENT"
+    if t == T_IDENT: return "IDENT"
+    if t == T_NUMBER: return "NUMBER"
+    if t == T_FLOAT: return "FLOAT"
+    if t == T_STRING: return "STRING"
+    if t == T_INDENT: return "INDENT"
+    if t == T_DEDENT: return "DEDENT"
+    if t == T_LET: return "LET"
+    if t == T_CONST: return "CONST"
+    if t == T_MUT: return "MUT"
+    if t == T_FN: return "FN"
+    if t == T_RETURN: return "RETURN"
+    if t == T_IF: return "IF"
+    if t == T_ELIF: return "ELIF"
+    if t == T_ELSE: return "ELSE"
+    if t == T_WHILE: return "WHILE"
+    if t == T_FOR: return "FOR"
+    if t == T_IN: return "IN"
+    if t == T_BREAK: return "BREAK"
+    if t == T_CONTINUE: return "CONTINUE"
+    if t == T_DEFER: return "DEFER"
+    if t == T_ERRDEFER: return "ERRDEFER"
+    if t == T_MATCH: return "MATCH"
+    if t == T_CASE: return "CASE"
+    if t == T_DEFAULT: return "DEFAULT"
+    if t == T_SWITCH: return "SWITCH"
+    if t == T_STRUCT: return "STRUCT"
+    if t == T_ENUM: return "ENUM"
+    if t == T_IMPL: return "IMPL"
+    if t == T_TRAIT: return "TRAIT"
+    if t == T_IMPORT: return "IMPORT"
+    if t == T_EXTERN: return "EXTERN"
+    if t == T_ASSERT: return "ASSERT"
+    if t == T_BENCH: return "BENCH"
+    if t == T_TEST: return "TEST"
+    if t == T_COMPTIME: return "COMPTIME"
+    if t == T_EXPORT: return "EXPORT"
+    if t == T_AS: return "AS"
+    if t == T_TYPE: return "TYPE"
+    if t == T_TRUE: return "TRUE"
+    if t == T_FALSE: return "FALSE"
+    if t == T_NONE: return "NONE"
+    if t == T_NIL: return "NIL"
+    if t == T_NOT: return "NOT"
+    if t == T_PLUS: return "PLUS"
+    if t == T_MINUS: return "MINUS"
+    if t == T_STAR: return "STAR"
+    if t == T_SLASH: return "SLASH"
+    if t == T_PERCENT: return "PERCENT"
+    if t == T_AMP: return "AMP"
+    if t == T_PIPE: return "PIPE"
+    if t == T_CARET: return "CARET"
+    if t == T_TILDE: return "TILDE"
+    if t == T_SHL: return "SHL"
+    if t == T_SHR: return "SHR"
+    if t == T_EQ: return "EQ"
+    if t == T_NEQ: return "NEQ"
+    if t == T_LT: return "LT"
+    if t == T_GT: return "GT"
+    if t == T_LTE: return "LTE"
+    if t == T_GTE: return "GTE"
+    if t == T_AND: return "AND"
+    if t == T_OR: return "OR"
+    if t == T_BANG: return "BANG"
+    if t == T_ASSIGN: return "ASSIGN"
+    if t == T_PLUS_ASS: return "PLUS_ASSIGN"
+    if t == T_MINUS_ASS: return "MINUS_ASSIGN"
+    if t == T_STAR_ASS: return "STAR_ASSIGN"
+    if t == T_SLASH_ASS: return "SLASH_ASSIGN"
+    if t == T_AMP_ASS: return "AMP_ASSIGN"
+    if t == T_PIPE_ASS: return "PIPE_ASSIGN"
+    if t == T_CARET_ASS: return "CARET_ASSIGN"
+    if t == T_LPAREN: return "LPAREN"
+    if t == T_RPAREN: return "RPAREN"
+    if t == T_LBRACE: return "LBRACE"
+    if t == T_RBRACE: return "RBRACE"
+    if t == T_LBRACKET: return "LBRACKET"
+    if t == T_RBRACKET: return "RBRACKET"
+    if t == T_COMMA: return "COMMA"
+    if t == T_DOT: return "DOT"
+    if t == T_DOT_DOT: return "DOT_DOT"
+    if t == T_COLON: return "COLON"
+    if t == T_COLON_ASS: return "COLON_ASSIGN"
+    if t == T_DCOLON: return "DOUBLE_COLON"
+    if t == T_SEMI: return "SEMICOLON"
+    if t == T_ARROW: return "ARROW"
+    if t == T_FAT_ARROW: return "FAT_ARROW"
+    if t == T_QUESTION: return "QUESTION"
+    if t == T_AT: return "AT"
+    if t == T_DOLLAR: return "DOLLAR"
+    return "UNKNOWN"
+
+# ============================================================
+# Lexer (via impl para mutar self)
+# ============================================================
+struct Lexer:
+    source: str
+    pos: int
+    length: int
+    line: int
+    col: int
+    paren_depth: int
+    at_line_start: int
+    indent_stack: ptr
+    indent_size: int
+
+impl Lexer:
+    # ---- acesso a caracteres ----
+    fn peek() -> int:
+        if self.pos < self.length:
+            return self.source[self.pos]
+        return 0
+
+    fn peek_at(off: int) -> int:
+        let p = self.pos + off
+        if p < self.length:
+            return self.source[p]
+        return 0
+
+    fn advance() -> int:
+        if self.pos >= self.length:
+            return 0
+        let c = self.source[self.pos]
+        self.pos = self.pos + 1
+        if c == 10:
+            self.line = self.line + 1
+            self.col = 1
+        else:
+            self.col = self.col + 1
+        return c
+
+    fn is_digit(c: int) -> int:
+        if c >= 48 and c <= 57: return 1
+        return 0
+
+    fn is_hex(c: int) -> int:
+        if c >= 48 and c <= 57: return 1
+        if c >= 97 and c <= 102: return 1
+        if c >= 65 and c <= 70: return 1
+        return 0
+
+    fn is_alpha(c: int) -> int:
+        if c >= 97 and c <= 122: return 1
+        if c >= 65 and c <= 90: return 1
+        if c == 95: return 1
+        return 0
+
+    fn is_alnum(c: int) -> int:
+        if self.is_alpha(c) == 1: return 1
+        if self.is_digit(c) == 1: return 1
+        return 0
+
+    fn skip_whitespace():
+        while self.peek() == 32 or self.peek() == 9:
+            self.advance()
+
+    # ---- mapeamento keyword → tipo ----
+    fn keyword_type(word: str) -> int:
+        if word == "let": return T_LET
+        if word == "const": return T_CONST
+        if word == "mut": return T_MUT
+        if word == "fn": return T_FN
+        if word == "return": return T_RETURN
+        if word == "if": return T_IF
+        if word == "elif": return T_ELIF
+        if word == "else": return T_ELSE
+        if word == "while": return T_WHILE
+        if word == "for": return T_FOR
+        if word == "in": return T_IN
+        if word == "break": return T_BREAK
+        if word == "continue": return T_CONTINUE
+        if word == "defer": return T_DEFER
+        if word == "errdefer": return T_ERRDEFER
+        if word == "match": return T_MATCH
+        if word == "case": return T_CASE
+        if word == "default": return T_DEFAULT
+        if word == "switch": return T_SWITCH
+        if word == "struct": return T_STRUCT
+        if word == "enum": return T_ENUM
+        if word == "impl": return T_IMPL
+        if word == "trait": return T_TRAIT
+        if word == "import": return T_IMPORT
+        if word == "extern": return T_EXTERN
+        if word == "assert": return T_ASSERT
+        if word == "bench": return T_BENCH
+        if word == "test": return T_TEST
+        if word == "comptime": return T_COMPTIME
+        if word == "export": return T_EXPORT
+        if word == "as": return T_AS
+        if word == "type": return T_TYPE
+        if word == "true": return T_TRUE
+        if word == "false": return T_FALSE
+        if word == "none": return T_NONE
+        if word == "nil": return T_NIL
+        if word == "and": return T_AND
+        if word == "or": return T_OR
+        if word == "not": return T_NOT
+        return T_IDENT
+
+    # ---- lexers específicos ----
+    fn lex_line_comment(tl: TokenList):
+        let start_line = self.line
+        let start_col = self.col
+        mut text = ""
+        while self.peek() != 10 and self.peek() != 13 and self.peek() != 0:
+            text = text + chr(self.advance())
+        push_token(tl, T_COMMENT, text, start_line, start_col)
+
+    fn lex_block_comment(tl: TokenList):
+        let start_line = self.line
+        let start_col = self.col
+        mut text = ""
+        text = text + chr(self.advance())  # /
+        text = text + chr(self.advance())  # *
+        while 1 == 1:
+            let c = self.peek()
+            if c == 0:
+                print("Erro: Comentario /* nao terminado")
+                break
+            if c == 42 and self.peek_at(1) == 47:
+                text = text + chr(self.advance())  # *
+                text = text + chr(self.advance())  # /
+                break
+            text = text + chr(self.advance())
+        push_token(tl, T_COMMENT, text, start_line, start_col)
+
+    fn lex_identifier(tl: TokenList):
+        let start_line = self.line
+        let start_col = self.col
+        mut word = ""
+        while self.is_alnum(self.peek()) == 1:
+            word = word + chr(self.advance())
+        let t = self.keyword_type(word)
+        push_token(tl, t, word, start_line, start_col)
+
+    fn lex_number(tl: TokenList):
+        let start_line = self.line
+        let start_col = self.col
+        mut text = ""
+        mut is_float = 0
+
+        if self.peek() == 48 and (self.peek_at(1) == 120 or self.peek_at(1) == 88):
+            # 0x...
+            text = text + chr(self.advance())
+            text = text + chr(self.advance())
+            while self.is_hex(self.peek()) == 1:
+                text = text + chr(self.advance())
+            push_token(tl, T_NUMBER, text, start_line, start_col)
+            return
+
+        if self.peek() == 48 and (self.peek_at(1) == 98 or self.peek_at(1) == 66):
+            # 0b...
+            text = text + chr(self.advance())
+            text = text + chr(self.advance())
+            while self.peek() == 48 or self.peek() == 49:
+                text = text + chr(self.advance())
+            push_token(tl, T_NUMBER, text, start_line, start_col)
+            return
+
+        if self.peek() == 48 and (self.peek_at(1) == 111 or self.peek_at(1) == 79):
+            # 0o...
+            text = text + chr(self.advance())
+            text = text + chr(self.advance())
+            while self.peek() >= 48 and self.peek() <= 55:
+                text = text + chr(self.advance())
+            push_token(tl, T_NUMBER, text, start_line, start_col)
+            return
+
+        while self.is_digit(self.peek()) == 1:
+            text = text + chr(self.advance())
+        if self.peek() == 46 and self.is_digit(self.peek_at(1)) == 1:
+            is_float = 1
+            text = text + chr(self.advance())
+            while self.is_digit(self.peek()) == 1:
+                text = text + chr(self.advance())
+        if self.peek() == 101 or self.peek() == 69:
+            is_float = 1
+            text = text + chr(self.advance())
+            if self.peek() == 43 or self.peek() == 45:
+                text = text + chr(self.advance())
+            while self.is_digit(self.peek()) == 1:
+                text = text + chr(self.advance())
+
+        if is_float == 1:
+            push_token(tl, T_FLOAT, text, start_line, start_col)
+        else:
+            push_token(tl, T_NUMBER, text, start_line, start_col)
+
+    fn lex_string(tl: TokenList, interpolated: int):
+        let start_line = self.line
+        let start_col = self.col
+        self.advance()  # consome a aspa de abertura
+        mut text = ""
+        while self.peek() != 34 and self.peek() != 0:
+            let c = self.advance()
+            if c == 92:
+                # Escape: desescapa aqui (alinhado com
+                # lumina/lexer/lexer.py::_read_escape). Preserva `\X`
+                # como 2 chars se X for desconhecido.
+                let esc = self.advance()
+                if esc == 110:      # \n
+                    text = text + chr(10)
+                elif esc == 116:    # \t
+                    text = text + chr(9)
+                elif esc == 114:    # \r
+                    text = text + chr(13)
+                elif esc == 48:     # \0
+                    text = text + chr(0)
+                elif esc == 97:     # \a
+                    text = text + chr(7)
+                elif esc == 98:     # \b
+                    text = text + chr(8)
+                elif esc == 102:    # \f
+                    text = text + chr(12)
+                elif esc == 118:    # \v
+                    text = text + chr(11)
+                elif esc == 92:     # \\  (backslash literal)
+                    text = text + chr(92)
+                elif esc == 34:     # \"
+                    text = text + chr(34)
+                elif esc == 39:     # \'
+                    text = text + chr(39)
+                else:
+                    text = text + chr(92) + chr(esc)
+            elif c == 10 or c == 13:
+                print("Erro: String nao terminada")
+                break
+            else:
+                text = text + chr(c)
+        if self.peek() == 34:
+            self.advance()
+        if interpolated == 1:
+            push_token(tl, T_STRING, "f\"" + text + "\"", start_line, start_col)
+        else:
+            push_token(tl, T_STRING, text, start_line, start_col)
+
+    fn handle_indent(tl: TokenList):
+        self.skip_whitespace()
+        let c = self.peek()
+
+        if c == 10 or c == 13:
+            if c == 13 and self.peek_at(1) == 10:
+                self.advance()
+            self.advance()
+            push_token(tl, T_NEWLINE, "\\n", self.line, self.col)
+            self.at_line_start = 1
+            return
+
+        if c == 0:
+            self.at_line_start = 0
+            return
+
+        if c == 35:
+            self.at_line_start = 0
+            return
+
+        if c == 47 and self.peek_at(1) == 42:
+            self.at_line_start = 0
+            return
+
+        let indent = self.col - 1
+        if indent > self.indent_stack[self.indent_size - 1]:
+            self.indent_stack[self.indent_size] = indent
+            self.indent_size = self.indent_size + 1
+            push_token(tl, T_INDENT, "", self.line, self.col)
+        elif indent < self.indent_stack[self.indent_size - 1]:
+            while indent < self.indent_stack[self.indent_size - 1]:
+                self.indent_size = self.indent_size - 1
+                push_token(tl, T_DEDENT, "", self.line, self.col)
+
+        self.at_line_start = 0
+
+    # ---- motor principal ----
+    fn lex_all(tl: TokenList):
+        while self.pos < self.length:
+            if self.paren_depth > 0:
+                while 1 == 1:
+                    self.skip_whitespace()
+                    let pc = self.peek()
+                    if pc == 35:
+                        self.lex_line_comment(tl)
+                        continue
+                    if pc == 47 and self.peek_at(1) == 42:
+                        self.lex_block_comment(tl)
+                        continue
+                    if pc == 10 or pc == 13:
+                        if pc == 13 and self.peek_at(1) == 10:
+                            self.advance()
+                        self.advance()
+                        continue
+                    break
+            else:
+                if self.at_line_start == 1:
+                    self.handle_indent(tl)
+                    if self.peek() == 0:
+                        break
+                    if self.at_line_start == 1:
+                        continue
+                else:
+                    self.skip_whitespace()
+                    let pc = self.peek()
+                    if pc == 10 or pc == 13:
+                        if pc == 13 and self.peek_at(1) == 10:
+                            self.advance()
+                        self.advance()
+                        push_token(tl, T_NEWLINE, "\\n", self.line, self.col)
+                        self.at_line_start = 1
+                        continue
+                    elif pc == 0:
+                        break
+
+            if self.pos >= self.length:
+                break
+
+            let c = self.peek()
+
+            # Comentários
+            if c == 35:  # '#'
+                self.lex_line_comment(tl)
+                continue
+            if c == 47 and self.peek_at(1) == 42:  # '/*'
+                self.lex_block_comment(tl)
+                continue
+
+            # Identificadores e keywords
+            if self.is_alpha(c) == 1:
+                # `f"..."` é FSTRING (tratado como T_STRING no python)
+                if c == 102 and self.peek_at(1) == 34:  # f"
+                    self.advance()  # consome o 'f'
+                    self.lex_string(tl, 1)
+                    continue
+                self.lex_identifier(tl)
+                continue
+
+            # Números
+            if self.is_digit(c) == 1:
+                self.lex_number(tl)
+                continue
+
+            # Strings
+            if c == 34:  # '"'
+                self.lex_string(tl, 0)
+                continue
+
+            # Operadores e pontuação
+            let l = self.line
+            let cc = self.col
+            let c2 = self.peek_at(1)
+
+            if c == 45 and c2 == 62:  # ->
+                self.advance()
+                self.advance()
+                push_token(tl, T_ARROW, "->", l, cc)
+            elif c == 61 and c2 == 62:  # =>
+                self.advance()
+                self.advance()
+                push_token(tl, T_FAT_ARROW, "=>", l, cc)
+            elif c == 61 and c2 == 61:  # ==
+                self.advance()
+                self.advance()
+                push_token(tl, T_EQ, "==", l, cc)
+            elif c == 33 and c2 == 61:  # !=
+                self.advance()
+                self.advance()
+                push_token(tl, T_NEQ, "!=", l, cc)
+            elif c == 60 and c2 == 61:  # <=
+                self.advance()
+                self.advance()
+                push_token(tl, T_LTE, "<=", l, cc)
+            elif c == 62 and c2 == 61:  # >=
+                self.advance()
+                self.advance()
+                push_token(tl, T_GTE, ">=", l, cc)
+            elif c == 60 and c2 == 60:  # <<
+                self.advance()
+                self.advance()
+                push_token(tl, T_SHL, "<<", l, cc)
+            elif c == 62 and c2 == 62:  # >>
+                self.advance()
+                self.advance()
+                push_token(tl, T_SHR, ">>", l, cc)
+            elif c == 38 and c2 == 38:  # &&
+                self.advance()
+                self.advance()
+                push_token(tl, T_AND, "&&", l, cc)
+            elif c == 124 and c2 == 124:  # ||
+                self.advance()
+                self.advance()
+                push_token(tl, T_OR, "||", l, cc)
+            elif c == 58 and c2 == 61:  # :=
+                self.advance()
+                self.advance()
+                push_token(tl, T_COLON_ASS, ":=", l, cc)
+            elif c == 58 and c2 == 58:  # ::
+                self.advance()
+                self.advance()
+                push_token(tl, T_DCOLON, "::", l, cc)
+            elif c == 46 and c2 == 46:  # ..
+                self.advance()
+                self.advance()
+                push_token(tl, T_DOT_DOT, "..", l, cc)
+            elif c == 43 and c2 == 61:  # +=
+                self.advance()
+                self.advance()
+                push_token(tl, T_PLUS_ASS, "+=", l, cc)
+            elif c == 45 and c2 == 61:  # -=
+                self.advance()
+                self.advance()
+                push_token(tl, T_MINUS_ASS, "-=", l, cc)
+            elif c == 42 and c2 == 61:  # *=
+                self.advance()
+                self.advance()
+                push_token(tl, T_STAR_ASS, "*=", l, cc)
+            elif c == 47 and c2 == 61:  # /=
+                self.advance()
+                self.advance()
+                push_token(tl, T_SLASH_ASS, "/=", l, cc)
+            elif c == 38 and c2 == 61:  # &=
+                self.advance()
+                self.advance()
+                push_token(tl, T_AMP_ASS, "&=", l, cc)
+            elif c == 124 and c2 == 61:  # |=
+                self.advance()
+                self.advance()
+                push_token(tl, T_PIPE_ASS, "|=", l, cc)
+            elif c == 94 and c2 == 61:  # ^=
+                self.advance()
+                self.advance()
+                push_token(tl, T_CARET_ASS, "^=", l, cc)
+            # Único caractere
+            elif c == 43:
+                self.advance()
+                push_token(tl, T_PLUS, "+", l, cc)
+            elif c == 45:
+                self.advance()
+                push_token(tl, T_MINUS, "-", l, cc)
+            elif c == 42:
+                self.advance()
+                push_token(tl, T_STAR, "*", l, cc)
+            elif c == 47:
+                self.advance()
+                push_token(tl, T_SLASH, "/", l, cc)
+            elif c == 37:
+                self.advance()
+                push_token(tl, T_PERCENT, "%", l, cc)
+            elif c == 38:
+                self.advance()
+                push_token(tl, T_AMP, "&", l, cc)
+            elif c == 124:
+                self.advance()
+                push_token(tl, T_PIPE, "|", l, cc)
+            elif c == 94:
+                self.advance()
+                push_token(tl, T_CARET, "^", l, cc)
+            elif c == 126:
+                self.advance()
+                push_token(tl, T_TILDE, "~", l, cc)
+            elif c == 60:
+                self.advance()
+                push_token(tl, T_LT, "<", l, cc)
+            elif c == 62:
+                self.advance()
+                push_token(tl, T_GT, ">", l, cc)
+            elif c == 61:
+                self.advance()
+                push_token(tl, T_ASSIGN, "=", l, cc)
+            elif c == 33:
+                self.advance()
+                push_token(tl, T_BANG, "!", l, cc)
+            elif c == 40:
+                self.paren_depth = self.paren_depth + 1
+                self.advance()
+                push_token(tl, T_LPAREN, "(", l, cc)
+            elif c == 41:
+                self.paren_depth = self.paren_depth - 1
+                self.advance()
+                push_token(tl, T_RPAREN, ")", l, cc)
+            elif c == 123:
+                self.paren_depth = self.paren_depth + 1
+                self.advance()
+                push_token(tl, T_LBRACE, "{", l, cc)
+            elif c == 125:
+                self.paren_depth = self.paren_depth - 1
+                self.advance()
+                push_token(tl, T_RBRACE, "}", l, cc)
+            elif c == 91:
+                self.paren_depth = self.paren_depth + 1
+                self.advance()
+                push_token(tl, T_LBRACKET, "[", l, cc)
+            elif c == 93:
+                self.paren_depth = self.paren_depth - 1
+                self.advance()
+                push_token(tl, T_RBRACKET, "]", l, cc)
+            elif c == 44:
+                self.advance()
+                push_token(tl, T_COMMA, ",", l, cc)
+            elif c == 46:
+                self.advance()
+                push_token(tl, T_DOT, ".", l, cc)
+            elif c == 58:
+                self.advance()
+                push_token(tl, T_COLON, ":", l, cc)
+            elif c == 59:
+                self.advance()
+                push_token(tl, T_SEMI, ";", l, cc)
+            elif c == 63:
+                self.advance()
+                push_token(tl, T_QUESTION, "?", l, cc)
+            elif c == 64:
+                self.advance()
+                push_token(tl, T_AT, "@", l, cc)
+            elif c == 36:
+                self.advance()
+                push_token(tl, T_DOLLAR, "$", l, cc)
+            else:
+                print("Erro: Caractere inesperado: '", chr(c), "'")
+                self.advance()
+
+        # Finalização do arquivo
+        if tl.size > 0:
+            let last_type = tl.types[tl.size - 1]
+            if last_type != T_NEWLINE and last_type != T_EOF:
+                push_token(tl, T_NEWLINE, "\\n", self.line, self.col)
+
+        while self.indent_size > 1:
+            self.indent_size = self.indent_size - 1
+            push_token(tl, T_DEDENT, "", self.line, self.col)
+
+        push_token(tl, T_EOF, "", self.line, self.col)
+
+# ============================================================
+# API pública
+# ============================================================
+fn tokenize(source: str) -> TokenList:
+    mut tl = new_token_list(4096)
+    mut lex: Lexer
+    lex.source = source
+    lex.pos = 0
+    lex.length = len(source)
+    lex.line = 1
+    lex.col = 1
+    lex.paren_depth = 0
+    lex.at_line_start = 1
+    lex.indent_stack = alloc(64)
+    lex.indent_stack[0] = 0
+    lex.indent_size = 1
+    lex.lex_all(tl)
+    return tl
+
+# Imprime tokens em formato estável para comparação:
+#   <TYPE> <line>:<col> <value>
+fn print_tokens(tl: TokenList):
+    mut i = 0
+    while i < tl.size:
+        let t = tl.types[i]
+        let ln = tl.lines[i]
+        let cl = tl.cols[i]
+        let v = tl.values[i] as str
+        print(type_name(t), ln, cl, v)
+        i = i + 1
+
+# ============================================================
+# main — lê `_lexer_sample.lm` do diretório atual e imprime tokens
+# ============================================================
+fn main() -> int:
+    let source = read_file("_lexer_sample.lm")
+    let tokens = tokenize(source)
+    print_tokens(tokens)
+    return 0

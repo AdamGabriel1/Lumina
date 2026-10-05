@@ -1,0 +1,9 @@
+## Módulo de File System (std/fs)
+## Funções para manipular arquivos no disco.
+
+extern fn remove(path: str) -> int
+
+## Deleta um arquivo do disco.
+## Retorna 0 se sucesso, ou -1 se falhar.
+fn deletar_arquivo(path: str) -> int:
+    return remove(path)

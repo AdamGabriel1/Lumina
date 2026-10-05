@@ -1,0 +1,31 @@
+import "std/http"
+
+fn main() -> int:
+    let porta = 3000
+    let server_fd = iniciar(porta)
+    
+    if server_fd < 0:
+        print("Erro ao iniciar backend na porta " + porta)
+        return 1
+        
+    print("🟢 Backend rodando em http://localhost:" + porta)
+    
+    mut client_addr = alloc_bytes(16)
+    mut client_len_ptr = alloc_bytes(4)
+    client_len_ptr[0] = 16
+    mut request_buffer = alloc_bytes(1024)
+    
+    # String de resposta pré-formatada (Content-Length exato: 20 bytes)
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 20\r\n\r\n<h1>Backend OK!</h1>"
+    let resp_len = len(response)
+    
+    while true:
+        let client_fd = accept(server_fd, client_addr, client_len_ptr)
+        if client_fd < 0:
+            continue
+            
+        recv(client_fd, request_buffer, 1024, 0)
+        send(client_fd, response, resp_len, 0)
+        close(client_fd)
+        
+    return 0

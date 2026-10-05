@@ -1,0 +1,23 @@
+# Módulo SQLite (std/sqlite)
+# Permite uso de banco de dados SQL nativo via FFI.
+
+extern fn sqlite3_open(filename: str, db: str) -> int
+extern fn sqlite3_close(db: str) -> int
+extern fn sqlite3_exec(db: str, sql: str, callback: int, arg: str, errmsg: str) -> int
+
+fn abrir(filename: str) -> str:
+    mut db_ptr = alloc(1)
+    let res = sqlite3_open(filename, db_ptr)
+    if res != 0:
+        print("Erro ao abrir banco SQLite")
+        return ""
+    return db_ptr[0]
+
+fn fechar(db: int):
+    sqlite3_close(db)
+
+fn executar(db: int, sql: str):
+    mut err_ptr = alloc(1)
+    let res = sqlite3_exec(db, sql, 0, "", err_ptr)
+    if res != 0:
+        print("Erro ao executar SQL")

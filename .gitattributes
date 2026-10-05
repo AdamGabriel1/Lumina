@@ -1,0 +1,35 @@
+# ============================================
+# Lumina Language
+# ============================================
+
+# Arquivos gerados — não contam como "código" no GitHub
+*.ll      linguist-generated=true
+*.wasm    linguist-generated=true
+*.o       linguist-generated=true
+*.profraw linguist-generated=true
+*.profdata linguist-generated=true
+
+# Arquivos de terceiros
+lumina-vscode/node_modules/**  linguist-vendored=true
+
+# Linguagem principal do repo
+*.py      linguist-language=Python
+*.lm      linguist-language=Lumina
+
+# Extensões específicas do Lumina
+lumina.toml  linguist-language=TOML
+*.expected   linguist-language=Text
+*.tmLanguage.json  linguist-language=JSON
+
+# Normaliza fim de linha — LF em todo o repo
+* text=auto eol=lf
+
+# Marca binários como binários (evita diff best-effort)
+*.wasm    binary
+*.o       binary
+*.profraw binary
+*.profdata binary
+
+# Não faz diff de arquivos gerados (menos ruído)
+*.ll      -diff
+*.wasm    -diff

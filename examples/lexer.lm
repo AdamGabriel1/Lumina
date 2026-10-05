@@ -1,0 +1,26 @@
+/* Tokenizer escrito na própria linguagem Lumina */
+
+fn main() -> int:
+    let code = "let x = 42"
+    let length = len(code)
+    
+    mut token = ""
+    
+    for i in 0..length:
+        let c = code[i]
+        
+        # Se for espaço (ASCII 32)
+        if c == 32:
+            # Se o token não estiver vazio, imprime e reseta
+            if len(token) > 0:
+                print("Token:", token)
+                token = ""
+        else:
+            # Concatena o caractere na string dinamicamente
+            token = token + chr(c)
+            
+    # Imprime o último token se a string não terminar com espaço
+    if len(token) > 0:
+        print("Token:", token)
+        
+    return 0

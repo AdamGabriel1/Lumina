@@ -1,0 +1,13 @@
+=== Default ===
+p1.x = 0
+p1.y = 0
+pessoa.idade = 0
+pessoa.ativo = false
+=== Clone ===
+copia.x = 10
+copia.y = 20
+=== Eq ===
+a == b? true
+a == c? false
+=== Debug ===
+Ponto { x: 1, y: 2 }

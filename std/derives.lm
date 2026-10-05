@@ -1,0 +1,231 @@
+# std/derives.lm — Derives genéricos escritos em Lumina via quasiquote.
+#
+# ⚠️  NÃO ESTÁ WIRED AO COMPILADOR (v1.0).
+#
+# Este arquivo é a especificação executável do design proposto na ADR
+# 0003 (Fase 5) e na ADR 0004. Ele demonstra como `@derive(Eq)` e
+# amigos podem ser reescritos em Lumina uma vez que:
+#
+#   1. `QuoteInterpreter` saiba produzir declarações (Function,
+#      ImplBlock, TraitDecl) como output de `quote:`.
+#   2. `~name` funcione em posição de nome de função:
+#         fn ~struct_name___eq__(...) -> bool:
+#   3. `~@stmts` funcione em statement position (fora de arrays).
+#   4. O wiring semantic → std/derives.lm esteja estável.
+#
+# Até lá, `@derive` continua sendo expandido por `lumina/semantic/
+# derives.py` (código Python). O comportamento é equivalente; a
+# migração é uma refatoração, não uma mudança de feature.
+#
+# Este arquivo compila com `lumina check` (é código Lumina válido),
+# mas não é importado pelo compilador em runtime.
+
+# ============================================================
+# Eq
+# ============================================================
+#
+# Gera:
+#   fn Ponto___eq__(a: Ponto, b: Ponto) -> bool:
+#       if a.x == b.x and a.y == b.y:
+#           return true
+#       return false
+#
+# Caso `fields` vazio: `return true` incondicional (struct vazia é
+# sempre igual a si mesma).
+@macro
+fn derive_eq(struct_name: str, fields: [str]) -> AstNode:
+    let cond = quote: true
+    let i = 0
+    let n = len(fields)
+    while i < n:
+        let f = fields[i]
+        let cmp = quote:
+            a.~f == b.~f
+        if i == 0:
+            cond = cmp
+        else:
+            cond = quote:
+                ~cond and ~cmp
+        i = i + 1
+
+    return quote:
+        fn ~struct_name___eq__(a: ~struct_name, b: ~struct_name) -> bool:
+            if ~cond:
+                return true
+            return false
+
+# ============================================================
+# PartialEq (__ne__)
+# ============================================================
+#
+# Gera:
+#   fn Ponto___ne__(a: Ponto, b: Ponto) -> bool:
+#       if not Ponto___eq__(a, b):
+#           return true
+#       return false
+#
+# Depende de `Ponto___eq__` existir. O compilador SEMPRE emite
+# `derive_eq` antes de `derive_ne` quando `PartialEq` é usado.
+@macro
+fn derive_ne(struct_name: str) -> AstNode:
+    return quote:
+        fn ~struct_name___ne__(a: ~struct_name, b: ~struct_name) -> bool:
+            if not ~struct_name___eq__(a, b):
+                return true
+            return false
+
+# ============================================================
+# Debug
+# ============================================================
+#
+# Gera:
+#   fn Ponto___debug__(p: Ponto) -> str:
+#       return "Ponto { x: " + p.x + ", y: " + p.y + " }"
+#
+# Estratégia: constrói uma lista de partes, depois concatena.
+# A primeira parte é `"<Struct> { <f0>: "`, as intermediárias são
+# `", <f>: "`, a última é `" }"`.
+#
+# Nota: `p.f` é inserido diretamente (não via `~p.f`) porque `p`
+# é um binding da macro. `~f` insere o nome do campo como string.
+@macro
+fn derive_debug(struct_name: str, fields: [str]) -> AstNode:
+    let parts = quote: []
+    let i = 0
+    let n = len(fields)
+    while i < n:
+        let f = fields[i]
+        if i == 0:
+            parts = quote:
+                [~struct_name + " { " + ~f + ": "]
+        else:
+            parts = quote:
+                [~parts, ", " + ~f + ": "]
+        parts = quote:
+            [~parts, p.~f]
+        i = i + 1
+
+    let full = quote:
+        ~parts + [" }"]
+
+    return quote:
+        fn ~struct_name___debug__(p: ~struct_name) -> str:
+            return ~full
+
+# ============================================================
+# Clone
+# ============================================================
+#
+# Gera:
+#   fn Ponto_clone(self: Ponto) -> Ponto:
+#       mut result: Ponto
+#       result.x = self.x
+#       result.y = self.y
+#       return result
+#
+# `~@assigns` espalha a lista de statements no corpo.
+@macro
+fn derive_clone(struct_name: str, fields: [str]) -> AstNode:
+    let assigns = quote: []
+    let i = 0
+    let n = len(fields)
+    while i < n:
+        let f = fields[i]
+        let a = quote:
+            result.~f = self.~f
+        assigns = quote:
+            [~assigns, ~a]
+        i = i + 1
+
+    return quote:
+        fn ~struct_name___clone__(self: ~struct_name) -> ~struct_name:
+            mut result: ~struct_name
+            ~@assigns
+            return result
+
+# ============================================================
+# Default
+# ============================================================
+#
+# Gera:
+#   fn new_Ponto() -> Ponto:
+#       mut result: Ponto
+#       result.x = 0
+#       result.y = 0
+#       return result
+#
+# `defaults[i]` é a expressão-fonte do default do campo `fields[i]`,
+# decidida pelo compilador com base no tipo:
+#   int   → "0"
+#   float → "0.0"
+#   bool  → "false"
+#   str   → "\"\""
+#   ptr   → "none"
+@macro
+fn derive_default(struct_name: str, fields: [str], defaults: [str]) -> AstNode:
+    let assigns = quote: []
+    let i = 0
+    let n = len(fields)
+    while i < n:
+        let f = fields[i]
+        let d = defaults[i]
+        let a = quote:
+            result.~f = ~d
+        assigns = quote:
+            [~assigns, ~a]
+        i = i + 1
+
+    return quote:
+        fn new_~struct_name() -> ~struct_name:
+            mut result: ~struct_name
+            ~@assigns
+            return result
+
+# ============================================================
+# Dispatch — ponto de entrada único
+# ============================================================
+#
+# O compilador chama `derive_dispatch(name, struct_name, fields, defaults)`
+# e recebe uma lista de Functions/ImplBlocks. Toda a lógica de
+# "quais derives estão pedidos" fica aqui.
+#
+# `names` é a lista de derives pedidos (ex: ["Eq", "Debug"]).
+# Retorna uma lista de nós (Functions). O compilador injeta cada
+# um em `declarations` como se fossem declarações do usuário.
+@macro
+fn derive_dispatch(names: [str], struct_name: str, fields: [str], defaults: [str]) -> AstNode:
+    let out = quote: []
+    let i = 0
+    let n = len(names)
+    let has_partial = 0
+    let has_eq = 0
+
+    # Pré-scan: PartialEq implica Eq (mesmo __eq__).
+    while i < n:
+        let name = names[i]
+        if name == "PartialEq":
+            has_partial = 1
+        if name == "Eq":
+            has_eq = 1
+        i = i + 1
+
+    if has_eq == 1 or has_partial == 1:
+        out = quote:
+            [~out, derive_eq(~struct_name, ~fields)]
+    if has_partial == 1:
+        out = quote:
+            [~out, derive_ne(~struct_name)]
+    if names.contains("Debug"):
+        out = quote:
+            [~out, derive_debug(~struct_name, ~fields)]
+    if names.contains("Display"):
+        out = quote:
+            [~out, derive_debug(~struct_name, ~fields)]
+    if names.contains("Clone"):
+        out = quote:
+            [~out, derive_clone(~struct_name, ~fields)]
+    if names.contains("Default"):
+        out = quote:
+            [~out, derive_default(~struct_name, ~fields, ~defaults)]
+
+    return out
